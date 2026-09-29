@@ -1,0 +1,7 @@
+.git/**
+tests/**
+scripts/**
+package.json
+README.md
+.clasp.json.example
+.gitignore

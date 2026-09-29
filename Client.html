@@ -1,0 +1,302 @@
+<script>
+(() => {
+  'use strict';
+  const state = {
+    places: [], points: [], candidates: [], baseAreas: [],
+    selectedPlaceId: null, selectedPointId: null, selectedCandidateId: null,
+    draftPlace: null, draftPoints: [], original: null,
+    dirty: false, placement: null, dragPointId: null, query: ''
+  };
+  const $ = (id) => document.getElementById(id);
+  const esc = (value) => String(value == null ? '' : value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+  const clone = (value) => JSON.parse(JSON.stringify(value));
+  const map = L.map('map', { preferCanvas: true }).setView([26.30, 127.76], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+  const layers = L.layerGroup().addTo(map);
+
+  function server(method, ...args) {
+    return new Promise((resolve, reject) => {
+      google.script.run.withSuccessHandler(response => {
+        if (response && response.success) resolve(response);
+        else reject(response || { error_code: 'INTERNAL_ERROR', message: '空のレスポンスです。' });
+      }).withFailureHandler(error => reject({ error_code: 'INTERNAL_ERROR', message: error.message || String(error) }))[method](...args);
+    });
+  }
+
+  async function init() {
+    setBusy(true, 'データを読み込んでいます…');
+    try {
+      const response = await server('getGeoEditorBootstrap');
+      state.places = response.data.places;
+      state.points = response.data.points;
+      state.candidates = response.data.candidates;
+      state.baseAreas = response.data.base_areas;
+      renderAll();
+      fitData();
+    } catch (error) { showError(error); }
+    finally { setBusy(false); }
+  }
+
+  function fitData() {
+    const coords = state.points.filter(p => p['有効'] !== false).map(p => [p['中心緯度'], p['中心経度']]);
+    if (coords.length) map.fitBounds(coords, { padding: [30, 30], maxZoom: 14 });
+  }
+
+  function renderAll() { renderLists(); renderMap(); renderEditor(); updateSaveState(); }
+
+  function renderLists() {
+    const q = state.query.toLocaleLowerCase('ja');
+    const pointNames = {};
+    state.points.forEach(p => { (pointNames[p.place_id] ||= []).push(p['ポイント名']); });
+    const places = state.places.filter(p => [p['地点名'], p['別名'], ...(pointNames[p.place_id] || [])].join(' ').toLocaleLowerCase('ja').includes(q));
+    $('placeCount').textContent = `${places.length}件`;
+    $('placeList').innerHTML = places.map(p => `<button class="list-item ${p.place_id === state.selectedPlaceId ? 'active' : ''}" data-place="${esc(p.place_id)}"><span class="list-title">${esc(p['地点名'])}</span><span class="list-meta">${esc(p['別名'] || p.place_id)}</span></button>`).join('') || '<div class="list-meta">該当なし</div>';
+    $('placeList').querySelectorAll('[data-place]').forEach(el => el.addEventListener('click', () => selectPlace(el.dataset.place)));
+
+    const candidates = state.candidates.filter(c => !['promoted','merged','rejected'].includes(c['候補状態']) && String(c['候補名']).toLocaleLowerCase('ja').includes(q));
+    $('candidateCount').textContent = `${candidates.length}件`;
+    $('candidateList').innerHTML = candidates.map(c => `<button class="list-item ${c.candidate_id === state.selectedCandidateId ? 'active' : ''}" data-candidate="${esc(c.candidate_id)}"><span class="list-title">${esc(c['候補名'])}</span><span class="list-meta">確認 ${esc(c['確認回数'])}回 · ${esc(c['候補状態'])}</span></button>`).join('') || '<div class="list-meta">未処理候補なし</div>';
+    $('candidateList').querySelectorAll('[data-candidate]').forEach(el => el.addEventListener('click', () => selectCandidate(el.dataset.candidate)));
+  }
+
+  function renderMap() {
+    layers.clearLayers();
+    const selectedIds = new Set(state.draftPoints.map(p => p.point_id).filter(Boolean));
+    const selectedCenter = state.draftPoints[0];
+    const points = state.points.filter(p => p['有効'] !== false && p.place_id !== state.selectedPlaceId).concat(state.draftPoints);
+    points.forEach(point => {
+      const selected = point.place_id === state.selectedPlaceId || state.draftPoints.includes(point);
+      const nearby = !selectedCenter || distance(point, selectedCenter) < 1000;
+      if (!selected && selectedCenter && nearby) L.circle([point['中心緯度'], point['中心経度']], { radius: point['判定半径_m'], color:'#7d8da4', weight:1, opacity:.35, fillOpacity:.025, interactive:false }).addTo(layers);
+      const letter = selected ? pointLetter(point) : '';
+      const marker = selected
+        ? L.marker([point['中心緯度'], point['中心経度']], {
+            draggable: state.dragPointId === (point.point_id || point._temp_id),
+            icon: L.divIcon({ className:'letter-icon', html:esc(letter || '•'), iconSize:[28,28], iconAnchor:[14,14] })
+          }).addTo(layers)
+        : L.circleMarker([point['中心緯度'], point['中心経度']], { radius:4, color:'#52647a', weight:1, fillOpacity:.45, opacity:.45 }).addTo(layers);
+      marker.bindTooltip(`${esc(point['ポイント名'])}<br>${esc(placeName(point.place_id))}`);
+      marker.on('click', () => point.place_id && selectPlace(point.place_id, point.point_id));
+      if (selected) {
+        L.circle([point['中心緯度'], point['中心経度']], { radius: point['判定半径_m'], color: point.point_id === state.selectedPointId ? '#1769e0' : '#6aa2ed', weight: point.point_id === state.selectedPointId ? 3 : 2, fillOpacity:.09, interactive:false }).addTo(layers);
+        marker.on('dragend', e => {
+          const ll = e.target.getLatLng(); point['中心緯度'] = ll.lat; point['中心経度'] = ll.lng;
+          state.dragPointId = null; markDirty(); renderAll();
+        });
+      }
+    });
+    state.candidates.filter(c => !['promoted','merged','rejected'].includes(c['候補状態'])).forEach(c => {
+      L.marker([c['基準緯度'], c['基準経度']], { icon:L.divIcon({ className:'candidate-icon', iconSize:[20,20], iconAnchor:[10,10] }), opacity:.8 })
+        .addTo(layers).bindTooltip(`候補: ${esc(c['候補名'])}`).on('click', () => selectCandidate(c.candidate_id));
+    });
+  }
+
+  function pointLetter(point) {
+    const sorted = state.draftPoints.slice().sort((a,b) => Number(a['表示順']) - Number(b['表示順']));
+    const index = sorted.indexOf(point);
+    return String.fromCharCode(65 + Math.max(0, index));
+  }
+  function placeName(id) { return (state.places.find(p => p.place_id === id) || {})['地点名'] || '新規地点'; }
+
+  function selectPlace(placeId, pointId) {
+    if (!canLeave()) return;
+    const place = state.places.find(p => p.place_id === placeId);
+    if (!place) return;
+    state.selectedPlaceId = placeId; state.selectedCandidateId = null;
+    state.draftPlace = clone(place);
+    state.draftPoints = clone(state.points.filter(p => p.place_id === placeId).sort((a,b) => Number(a['表示順']) - Number(b['表示順'])));
+    state.selectedPointId = pointId || null; state.original = clone({ place:state.draftPlace, points:state.draftPoints });
+    state.placement = null; state.dragPointId = null; setDirty(false); renderAll();
+    const anchor = state.draftPoints.find(p => p.point_id === pointId) || state.draftPoints[0];
+    if (anchor) map.setView([anchor['中心緯度'], anchor['中心経度']], Math.max(map.getZoom(), 16));
+  }
+
+  function selectCandidate(candidateId) {
+    if (!canLeave()) return;
+    state.selectedCandidateId = candidateId; state.selectedPlaceId = null; state.selectedPointId = null;
+    state.draftPlace = null; state.draftPoints = []; state.original = null; setDirty(false); renderAll();
+    const c = state.candidates.find(item => item.candidate_id === candidateId);
+    if (c) map.setView([c['基準緯度'], c['基準経度']], 17);
+  }
+
+  function renderEditor() {
+    $('emptyEditor').hidden = !!(state.draftPlace || state.selectedCandidateId);
+    $('placeEditor').hidden = true; $('pointEditor').hidden = true; $('candidateEditor').hidden = true;
+    $('addPointBtn').disabled = !state.draftPlace;
+    if (state.selectedCandidateId) return renderCandidateEditor();
+    if (!state.draftPlace) return;
+    if (state.selectedPointId) return renderPointEditor();
+    renderPlaceEditor();
+  }
+
+  function renderPlaceEditor() {
+    const p = state.draftPlace;
+    const baseOptions = ['<option value="">なし</option>'].concat(state.baseAreas.filter(b => b['有効'] !== false).map(b => `<option value="${esc(b.base_area_id)}" ${b.base_area_id === p.base_area_id ? 'selected' : ''}>${esc(b['基地名'])}</option>`)).join('');
+    $('placeEditor').hidden = false;
+    $('placeEditor').innerHTML = `<h1>${p.place_id ? '地点' : '新規地点'}</h1>
+      ${field('地点名','place-name',p['地点名'])}${field('別名','place-alias',p['別名'])}
+      <div class="field"><label>base_area_id</label><select id="place-base">${baseOptions}</select></div>
+      <div class="field row">${field('優先度','place-priority',p['優先度'],'number')}<label class="check"><input id="place-active" type="checkbox" ${p['有効'] ? 'checked' : ''}>有効</label></div>
+      ${area('備考','place-note',p['備考'])}
+      <div class="field"><label>最終使用日時</label><div class="readonly">${esc(p['最終使用日時'] || '—')}</div></div>
+      <div class="field"><label>revision</label><div class="readonly">${esc(p.revision || '新規')}</div></div>
+      <h3>判定ポイント</h3><div class="point-list">${state.draftPoints.map(point => `<button type="button" class="point-row" data-edit-point="${esc(point.point_id || point._temp_id)}"><span class="badge">${pointLetter(point)}</span><span>${esc(point['ポイント名'])}<small class="list-meta">半径 ${esc(point['判定半径_m'])}m</small></span></button>`).join('')}</div>`;
+    bindValue('place-name', v => p['地点名'] = v); bindValue('place-alias', v => p['別名'] = v); bindValue('place-base', v => p.base_area_id = v);
+    bindValue('place-priority', v => p['優先度'] = Number(v)); bindValue('place-note', v => p['備考'] = v);
+    $('place-active').addEventListener('change', e => { p['有効'] = e.target.checked; markDirty(); });
+    $('placeEditor').querySelectorAll('[data-edit-point]').forEach(el => el.addEventListener('click', () => { state.selectedPointId = el.dataset.editPoint; renderAll(); }));
+  }
+
+  function renderPointEditor() {
+    const p = state.draftPoints.find(point => (point.point_id || point._temp_id) === state.selectedPointId);
+    if (!p) { state.selectedPointId = null; return renderPlaceEditor(); }
+    const suggestion = suggest(p);
+    const overlaps = overlapItems(p);
+    $('pointEditor').hidden = false;
+    $('pointEditor').innerHTML = `<button type="button" id="backPlace">← 地点へ</button><h1>${esc(pointLetter(p))} ${esc(p['ポイント名'])}</h1>
+      ${field('ポイント名','point-name',p['ポイント名'])}
+      <div class="field row">${field('表示順','point-order',p['表示順'],'number')}${field('優先度','point-priority',p['優先度'],'number')}</div>
+      <div class="field row">${field('中心緯度','point-lat',p['中心緯度'],'number','any')}${field('中心経度','point-lng',p['中心経度'],'number','any')}</div>
+      <button type="button" id="movePoint">位置を修正</button>
+      <div class="field row">${field('判定半径_m','point-radius',p['判定半径_m'],'number','1')}${field('最大GPS精度_m','point-accuracy',p['最大GPS精度_m'],'number','1')}</div>
+      <label class="check"><input id="point-active" type="checkbox" ${p['有効'] ? 'checked' : ''}>有効</label>
+      ${area('備考','point-note',p['備考'])}
+      <h3>自動提案</h3><div class="warning ${suggestion.density === 'critical' ? 'critical' : ''}">推奨半径 ${suggestion.radius}m / 最大GPS精度 ${suggestion.accuracy}m${suggestion.density !== 'normal' ? '<br>高密度地点です。慎重に確認してください。' : ''}</div>
+      <button type="button" id="applySuggestion">推奨値を適用</button>
+      ${overlaps.length ? `<h3>他地点との重複警告</h3>${overlaps.map(o => `<div class="warning critical">${esc(o.name)} と約 ${o.overlap.toFixed(1)}m 重複</div>`).join('')}` : ''}`;
+    $('backPlace').addEventListener('click', () => { state.selectedPointId = null; state.dragPointId = null; renderAll(); });
+    bindValue('point-name', v => p['ポイント名'] = v); bindValue('point-order', v => p['表示順'] = Number(v)); bindValue('point-priority', v => p['優先度'] = Number(v));
+    bindValue('point-lat', v => p['中心緯度'] = Number(v), true); bindValue('point-lng', v => p['中心経度'] = Number(v), true); bindValue('point-radius', v => p['判定半径_m'] = Number(v), true); bindValue('point-accuracy', v => p['最大GPS精度_m'] = Number(v)); bindValue('point-note', v => p['備考'] = v);
+    $('point-active').addEventListener('change', e => { p['有効'] = e.target.checked; markDirty(); });
+    $('movePoint').addEventListener('click', () => { state.dragPointId = p.point_id || p._temp_id; renderMap(); toast('マーカーをドラッグして位置を修正してください。'); });
+    $('applySuggestion').addEventListener('click', () => { p['判定半径_m'] = suggestion.radius; p['最大GPS精度_m'] = suggestion.accuracy; markDirty(); renderAll(); });
+  }
+
+  function renderCandidateEditor() {
+    const c = state.candidates.find(item => item.candidate_id === state.selectedCandidateId);
+    if (!c) return;
+    const initialSuggestion = suggest({ place_id:null, '中心緯度':c['基準緯度'], '中心経度':c['基準経度'] });
+    const options = state.places.filter(p => p['有効'] !== false).sort((a,b) => a['地点名'].localeCompare(b['地点名'],'ja')).map(p => `<option value="${esc(p.place_id)}">${esc(p['地点名'])}</option>`).join('');
+    $('candidateEditor').hidden = false;
+    $('candidateEditor').innerHTML = `<h1>学習候補</h1>
+      ${candidateRead('候補名',c['候補名'])}${candidateRead('確認回数',c['確認回数'])}${candidateRead('基準位置',`${c['基準緯度']}, ${c['基準経度']}`)}${candidateRead('GPS精度',`${c['GPS精度_m']}m`)}${candidateRead('最寄地点',c['最寄place_id'] || '—')}${candidateRead('距離',c['最寄地点距離_m'] == null ? '—' : `${c['最寄地点距離_m']}m`)}${candidateRead('候補状態',c['候補状態'])}
+      ${field('登録時の地点名','candidate-place-name',c['候補名'])}${field('ポイント名','candidate-point-name','メイン')}
+      <div class="field row">${field('判定半径_m','candidate-radius',initialSuggestion.radius,'number','1')}${field('最大GPS精度_m','candidate-accuracy',initialSuggestion.accuracy,'number','1')}</div>
+      <div id="candidate-suggestion" class="warning ${initialSuggestion.density === 'critical' ? 'critical' : ''}">周辺pointからの推奨値: 半径 ${initialSuggestion.radius}m / 最大GPS精度 ${initialSuggestion.accuracy}m</div>
+      <button id="promoteCandidate" class="primary">新規地点として登録</button>
+      <h3>既存地点へ処理</h3><div class="field"><label>登録先地点</label><select id="candidate-target"><option value="">選択してください</option>${options}</select></div>
+      <label class="check"><input id="candidate-alias" type="checkbox" checked>候補名を別名へ追加</label>
+      <div class="button-row"><button id="mergeCandidate">既存地点へ統合</button><button id="addPointCandidate">新判定ポイント追加</button><button id="rejectCandidate" class="danger">不採用</button></div>`;
+    $('promoteCandidate').addEventListener('click', e => { e.preventDefault(); resolveCandidateAction('promote'); });
+    $('mergeCandidate').addEventListener('click', e => { e.preventDefault(); resolveCandidateAction('merge'); });
+    $('addPointCandidate').addEventListener('click', e => { e.preventDefault(); resolveCandidateAction('add_point'); });
+    $('rejectCandidate').addEventListener('click', e => { e.preventDefault(); if (confirm('この候補を不採用にしますか？')) resolveCandidateAction('reject'); });
+    $('candidate-target').addEventListener('change', e => {
+      const s = suggest({ place_id:e.target.value || null, '中心緯度':c['基準緯度'], '中心経度':c['基準経度'] });
+      $('candidate-radius').value = s.radius; $('candidate-accuracy').value = s.accuracy;
+      $('candidate-suggestion').classList.toggle('critical', s.density === 'critical');
+      $('candidate-suggestion').textContent = `周辺pointからの推奨値: 半径 ${s.radius}m / 最大GPS精度 ${s.accuracy}m`;
+    });
+  }
+
+  async function resolveCandidateAction(action) {
+    const c = state.candidates.find(item => item.candidate_id === state.selectedCandidateId);
+    const targetId = $('candidate-target') ? $('candidate-target').value : '';
+    const target = state.places.find(p => p.place_id === targetId);
+    const point = { 'ポイント名':$('candidate-point-name').value.trim() || 'メイン', '表示順':1, '中心緯度':c['基準緯度'], '中心経度':c['基準経度'], '判定半径_m':Number($('candidate-radius').value), '最大GPS精度_m':Number($('candidate-accuracy').value), '優先度':100, '有効':true, '備考':'' };
+    const payload = { action, candidate_id:c.candidate_id, revision:c.revision, point };
+    if (action === 'promote') payload.bundle = { place:{ '地点名':$('candidate-place-name').value.trim(), base_area_id:c['推定base_area_id'] || '', '優先度':0, '別名':'', '有効':true, '備考':'', '登録元':'learning_candidate' }, points:[point] };
+    if (action === 'merge' || action === 'add_point') {
+      if (!target) return toast('登録先地点を選択してください。');
+      payload.place_id = target.place_id; payload.place_revision = target.revision; payload.add_candidate_alias = $('candidate-alias').checked;
+    }
+    setBusy(true, '候補を処理しています…');
+    try { const response = await server('resolveCandidate', payload); showWarnings(response.warnings); await reload(); toast('候補を処理しました。'); }
+    catch (error) { showError(error); } finally { setBusy(false); }
+  }
+
+  function startNewPlace() {
+    if (!canLeave()) return;
+    setDirty(false);
+    state.placement = 'new-place'; state.selectedPlaceId = null; state.selectedCandidateId = null; state.draftPlace = null; state.draftPoints = [];
+    $('mapHint').textContent = '地図をクリックして新規地点の中心を指定'; toast('地図上の位置をクリックしてください。');
+  }
+
+  function startAddPoint() {
+    if (!state.draftPlace) return;
+    state.placement = 'add-point'; $('mapHint').textContent = '地図をクリックして新しい判定ポイントを指定'; toast('地図上の位置をクリックしてください。');
+  }
+
+  map.on('click', e => {
+    if (state.placement === 'new-place') {
+      const point = newPoint(e.latlng, 1); point._temp_id = `temp-${Date.now()}`;
+      state.draftPlace = { '地点名':'新規地点', base_area_id:'', '優先度':0, '別名':'', '登録元':'geo_editor', '最終使用日時':'', '有効':true, '備考':'' };
+      state.draftPoints = [point]; state.selectedPointId = null; state.original = clone({ place:state.draftPlace, points:state.draftPoints }); state.placement = null; markDirty(); renderAll();
+    } else if (state.placement === 'add-point') {
+      const point = newPoint(e.latlng, state.draftPoints.length + 1); point.place_id = state.draftPlace.place_id; point._temp_id = `temp-${Date.now()}`;
+      const s = suggest(point); point['判定半径_m'] = s.radius; point['最大GPS精度_m'] = s.accuracy;
+      state.draftPoints.push(point); state.selectedPointId = point._temp_id; state.placement = null; markDirty(); renderAll();
+    }
+    $('mapHint').textContent = '地点・ポイントを地図で確認できます';
+  });
+
+  function newPoint(ll, order) { return { 'ポイント名':'メイン', '表示順':order, '中心緯度':ll.lat, '中心経度':ll.lng, '判定半径_m':50, '最大GPS精度_m':50, '優先度':100, '登録元':'geo_editor', '有効':true, '備考':'' }; }
+
+  async function save() {
+    if (!state.draftPlace || !state.dirty) return;
+    const isNew = !state.draftPlace.place_id;
+    let preserve = true;
+    const originalName = state.original && state.original.place['地点名'];
+    if (!isNew && originalName !== state.draftPlace['地点名']) preserve = confirm(`旧地点名「${originalName}」を別名として残しますか？\n\nOK: 別名に残す / キャンセル: 残さない`);
+    const points = state.draftPoints.map(p => { const copy = clone(p); delete copy._temp_id; return copy; });
+    setBusy(true, '保存しています…');
+    try {
+      const response = isNew ? await server('createPlaceBundle', { place:state.draftPlace, points }) : await server('savePlaceBundle', { place:state.draftPlace, points, preserve_old_name:preserve });
+      applyBundle(response.data, isNew); setDirty(false); showWarnings(response.warnings); selectPlace(response.data.place.place_id); toast('保存しました。');
+    } catch (error) { showError(error); } finally { setBusy(false); }
+  }
+
+  function applyBundle(bundle, isNew) {
+    if (isNew) state.places.push(bundle.place); else state.places = state.places.map(p => p.place_id === bundle.place.place_id ? bundle.place : p);
+    state.points = state.points.filter(p => p.place_id !== bundle.place.place_id).concat(bundle.points);
+  }
+  function discard() {
+    if (!state.original) { state.draftPlace = null; state.draftPoints = []; state.selectedPointId = null; setDirty(false); return renderAll(); }
+    state.draftPlace = clone(state.original.place); state.draftPoints = clone(state.original.points); state.selectedPointId = null; setDirty(false); renderAll();
+  }
+  function canLeave() { return !state.dirty || confirm('未保存の変更があります。変更を破棄して移動しますか？'); }
+  function markDirty() { setDirty(true); renderMap(); updateSaveState(); }
+  function setDirty(value) { state.dirty = value; updateSaveState(); }
+  function updateSaveState() { $('saveState').textContent = state.dirty ? '未保存の変更があります' : '保存済み'; $('saveState').classList.toggle('dirty',state.dirty); $('saveBtn').disabled = !state.dirty; $('discardBtn').disabled = !state.dirty; }
+
+  function distance(a,b) { const r=6371008.8, d=Math.PI/180, p1=a['中心緯度']*d, p2=b['中心緯度']*d, dp=(b['中心緯度']-a['中心緯度'])*d, dl=(b['中心経度']-a['中心経度'])*d; const x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2; return 2*r*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); }
+  function suggest(point) {
+    const others = state.points.filter(p => p['有効'] !== false && p.place_id !== point.place_id && p.point_id !== point.point_id);
+    const raw = others.length ? Math.min(50, ...others.map(p => distance(point,p)-Number(p['判定半径_m'])-5)) : 50;
+    const radius = Math.max(5, Math.floor(raw/5)*5); return { radius, accuracy:Math.min(50,radius), density:radius<=15?'critical':radius<20?'warning':'normal' };
+  }
+  function overlapItems(point) { return state.points.filter(p => p['有効'] !== false && p.place_id !== point.place_id).map(p => ({ p, overlap:Number(point['判定半径_m'])+Number(p['判定半径_m'])-distance(point,p) })).filter(x => x.overlap>0).map(x => ({ name:`${placeName(x.p.place_id)} / ${x.p['ポイント名']}`, overlap:x.overlap })); }
+
+  function field(label,id,value,type='text',step) { return `<div class="field"><label for="${id}">${esc(label)}</label><input id="${id}" type="${type}" ${step ? `step="${step}"` : ''} value="${esc(value)}"></div>`; }
+  function area(label,id,value) { return `<div class="field"><label for="${id}">${esc(label)}</label><textarea id="${id}">${esc(value || '')}</textarea></div>`; }
+  function candidateRead(label,value) { return `<div class="field"><label>${esc(label)}</label><div class="readonly">${esc(value)}</div></div>`; }
+  function bindValue(id, setter, rerenderMap=false) { $(id).addEventListener('input', e => { setter(e.target.value); state.dirty=true; updateSaveState(); if (rerenderMap) renderMap(); }); }
+  function setBusy(busy,message) {
+    document.body.style.cursor = busy ? 'progress' : '';
+    $('mapHint').textContent = busy ? (message || '処理中…') : '地点・ポイントを地図で確認できます';
+  }
+  function toast(message) { $('toast').textContent=message; $('toast').hidden=false; clearTimeout(toast.timer); toast.timer=setTimeout(()=>$('toast').hidden=true,4500); }
+  function showError(error) { const prefix=error.error_code ? `[${error.error_code}] ` : ''; alert(prefix+(error.message || 'エラーが発生しました。')); }
+  function showWarnings(warnings) { if (warnings && warnings.length) alert(`保存は完了しましたが警告があります。\n\n${warnings.map(w=>w.message||w.code).join('\n')}`); }
+  async function reload() { const response=await server('getGeoEditorBootstrap'); state.places=response.data.places; state.points=response.data.points; state.candidates=response.data.candidates; state.baseAreas=response.data.base_areas; state.selectedCandidateId=null; state.selectedPlaceId=null; renderAll(); }
+
+  $('searchInput').addEventListener('input', e => { state.query=e.target.value; renderLists(); });
+  $('newPlaceBtn').addEventListener('click', startNewPlace); $('addPointBtn').addEventListener('click', startAddPoint);
+  $('saveBtn').addEventListener('click', save); $('discardBtn').addEventListener('click', discard);
+  window.addEventListener('beforeunload', e => { if (state.dirty) { e.preventDefault(); e.returnValue=''; } });
+  init();
+})();
+</script>
