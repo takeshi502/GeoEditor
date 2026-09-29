@@ -154,3 +154,19 @@ test('論理削除は有効=falseとして保持する', () => {
   assert.equal(disabled.point_id,'p1');
   assert.equal(disabled.revision,2);
 });
+
+test('3カラムと地図は確定したGrid行の内側に収まる', () => {
+  const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const index=fs.readFileSync(path.join(root,'Index.html'),'utf8');
+  assert.doesNotMatch(index,/leaflet@1\.9\.4\/dist\/leaflet\.css/);
+  assert.match(styles,/\.leaflet-pane[^}]*position:absolute;[^}]*left:0;[^}]*top:0;/);
+  assert.match(styles,/\.leaflet-container \{[^}]*overflow:hidden;/);
+  assert.match(styles,/html, body \{[^}]*height:100%;[^}]*overflow:hidden;/);
+  assert.match(styles,/\.workspace \{[^}]*min-height:0;[^}]*grid-template-rows:minmax\(0, 1fr\);[^}]*overflow:hidden;/);
+  assert.match(styles,/\.panel \{[^}]*min-height:0;[^}]*overflow:auto;/);
+  assert.match(styles,/\.map-panel \{[^}]*min-height:0;[^}]*overflow:hidden;/);
+  assert.match(styles,/#map \{[^}]*height:100%;[^}]*min-height:0;[^}]*overflow:hidden;/);
+  assert.match(client,/renderAll\(\);\s*await new Promise\(resolve => requestAnimationFrame\(resolve\)\);\s*map\.invalidateSize\(\{ pan:false \}\);\s*fitData\(\);/);
+  assert.equal((client.match(/map\.invalidateSize/g)||[]).length,1);
+});

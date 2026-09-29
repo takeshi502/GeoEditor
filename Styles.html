@@ -1,7 +1,28 @@
 <style>
   :root { color-scheme: light; --blue:#1769e0; --line:#dce2ea; --muted:#667085; --bg:#f4f6f8; --danger:#c72c41; }
   * { box-sizing:border-box; }
-  html, body { height:100%; margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif; color:#172033; background:var(--bg); }
+  /* Leaflet 1.9.4 structural styles are inlined because HtmlService does not attach the external stylesheet. */
+  .leaflet-pane,.leaflet-tile,.leaflet-marker-icon,.leaflet-marker-shadow,.leaflet-tile-container,.leaflet-pane>svg,.leaflet-pane>canvas,.leaflet-zoom-box,.leaflet-image-layer,.leaflet-layer { position:absolute; left:0; top:0; }
+  .leaflet-container { overflow:hidden; -webkit-tap-highlight-color:transparent; background:#ddd; outline-offset:1px; font:12px/1.5 "Helvetica Neue",Arial,Helvetica,sans-serif; }
+  .leaflet-tile,.leaflet-marker-icon,.leaflet-marker-shadow { user-select:none; -webkit-user-drag:none; }
+  .leaflet-container .leaflet-marker-pane img,.leaflet-container .leaflet-shadow-pane img,.leaflet-container .leaflet-tile-pane img,.leaflet-container img.leaflet-image-layer,.leaflet-container .leaflet-tile { max-width:none!important; max-height:none!important; width:auto; padding:0; }
+  .leaflet-container img.leaflet-tile { mix-blend-mode:plus-lighter; }
+  .leaflet-tile { visibility:hidden; } .leaflet-tile-loaded { visibility:inherit; }
+  .leaflet-pane { z-index:400; } .leaflet-tile-pane { z-index:200; } .leaflet-overlay-pane { z-index:400; } .leaflet-shadow-pane { z-index:500; } .leaflet-marker-pane { z-index:600; } .leaflet-tooltip-pane { z-index:650; } .leaflet-popup-pane { z-index:700; }
+  .leaflet-map-pane canvas { z-index:100; } .leaflet-map-pane svg { z-index:200; }
+  .leaflet-control { position:relative; z-index:800; pointer-events:auto; float:left; clear:both; }
+  .leaflet-top,.leaflet-bottom { position:absolute; z-index:1000; pointer-events:none; } .leaflet-top { top:0; } .leaflet-right { right:0; } .leaflet-bottom { bottom:0; } .leaflet-left { left:0; }
+  .leaflet-right .leaflet-control { float:right; } .leaflet-top .leaflet-control { margin-top:10px; } .leaflet-bottom .leaflet-control { margin-bottom:10px; } .leaflet-left .leaflet-control { margin-left:10px; } .leaflet-right .leaflet-control { margin-right:10px; }
+  .leaflet-zoom-animated { transform-origin:0 0; } .leaflet-zoom-anim .leaflet-zoom-animated { transition:transform .25s cubic-bezier(0,0,.25,1); }
+  .leaflet-interactive { cursor:pointer; } .leaflet-grab { cursor:grab; } .leaflet-dragging .leaflet-grab,.leaflet-dragging .leaflet-marker-draggable { cursor:grabbing; }
+  .leaflet-marker-icon,.leaflet-marker-shadow,.leaflet-image-layer,.leaflet-pane>svg path,.leaflet-tile-container { pointer-events:none; }
+  .leaflet-marker-icon.leaflet-interactive,.leaflet-image-layer.leaflet-interactive,.leaflet-pane>svg path.leaflet-interactive { pointer-events:auto; }
+  .leaflet-container a { color:#0078a8; }
+  .leaflet-bar { box-shadow:0 1px 5px #000a; border-radius:4px; } .leaflet-bar a { background:#fff; border-bottom:1px solid #ccc; width:30px; height:30px; line-height:30px; display:block; text-align:center; text-decoration:none; color:#000; } .leaflet-bar a:last-child { border-bottom:0; }
+  .leaflet-control-zoom-in,.leaflet-control-zoom-out { font:bold 22px "Lucida Console",Monaco,monospace; }
+  .leaflet-container .leaflet-control-attribution { background:#fffc; margin:0; } .leaflet-control-attribution { padding:0 5px; color:#333; line-height:1.4; } .leaflet-control-attribution a { text-decoration:none; }
+  .leaflet-tooltip { position:absolute; padding:6px; background:#fff; border:1px solid #fff; border-radius:3px; color:#222; white-space:nowrap; user-select:none; pointer-events:none; box-shadow:0 1px 3px #0006; }
+  html, body { height:100%; margin:0; overflow:hidden; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif; color:#172033; background:var(--bg); }
   button, input, textarea, select { font:inherit; }
   button { border:1px solid #b9c3d0; border-radius:7px; background:#fff; padding:7px 11px; cursor:pointer; }
   button:hover:not(:disabled) { border-color:#7f8da0; background:#f8fafc; }
@@ -12,8 +33,8 @@
   .topbar strong { font-size:18px; } .version { margin-left:8px; color:var(--muted); font-size:12px; }
   .save-state { margin-left:auto; font-size:13px; color:var(--muted); } .save-state.dirty { color:#a15c00; font-weight:600; }
   .top-actions { display:flex; gap:8px; }
-  .workspace { height:calc(100% - 54px); display:grid; grid-template-columns:minmax(240px, 21%) minmax(420px, 1fr) minmax(300px, 27%); }
-  .panel { background:#fff; overflow:auto; }
+  .workspace { height:calc(100% - 54px); min-height:0; display:grid; grid-template-columns:minmax(240px, 21%) minmax(420px, 1fr) minmax(300px, 27%); grid-template-rows:minmax(0, 1fr); overflow:hidden; }
+  .panel { min-height:0; background:#fff; overflow:auto; }
   .left-panel { border-right:1px solid var(--line); padding:12px; }
   .right-panel { border-left:1px solid var(--line); padding:16px; }
   .search span, .field label { display:block; color:var(--muted); font-size:12px; margin-bottom:5px; }
@@ -25,8 +46,8 @@
   .list-item:hover, .list-item.active { background:#eef5ff; border-color:#c8dcfb; }
   .list-title { font-weight:600; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .list-meta { font-size:11px; color:var(--muted); display:block; margin-top:2px; }
-  .map-panel { position:relative; min-width:0; }
-  #map { height:100%; width:100%; z-index:0; }
+  .map-panel { position:relative; min-width:0; min-height:0; overflow:hidden; }
+  #map { height:100%; min-height:0; width:100%; overflow:hidden; z-index:0; }
   .map-toolbar { position:absolute; z-index:500; top:10px; left:50px; right:10px; display:flex; gap:8px; align-items:center; pointer-events:none; }
   .map-toolbar > * { pointer-events:auto; } #mapHint { background:rgba(255,255,255,.94); padding:7px 10px; border-radius:7px; box-shadow:0 1px 5px #0002; color:#475467; font-size:12px; }
   .toast { position:absolute; z-index:600; left:50%; bottom:20px; transform:translateX(-50%); background:#172033; color:white; padding:10px 14px; border-radius:8px; max-width:80%; }

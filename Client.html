@@ -35,6 +35,8 @@
       state.candidates = response.data.candidates;
       state.baseAreas = response.data.base_areas;
       renderAll();
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      map.invalidateSize({ pan:false });
       fitData();
     } catch (error) { showError(error); }
     finally { setBusy(false); }
