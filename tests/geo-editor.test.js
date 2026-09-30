@@ -175,6 +175,8 @@ test('地図候補マーカーと左一覧は共通の候補選択処理を使�
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
   assert.match(client,/data-candidate[^\n]+selectCandidate\(el\.dataset\.candidate\)/);
   assert.match(client,/marker\.on\('click',[\s\S]*?selectCandidate\(c\.candidate_id\)/);
+  assert.match(client,/markerElement\.dataset\.candidate = c\.candidate_id/);
+  assert.match(client,/markerElement\.setAttribute\('aria-label', `候補: \$\{c\['候補名'\]\}`\)/);
   assert.match(client,/state\.selectedCandidateId = candidateId/);
   assert.match(client,/if \(state\.selectedCandidateId\) return renderCandidateEditor\(\)/);
 });

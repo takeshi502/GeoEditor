@@ -105,6 +105,9 @@
         opacity:selected ? 1 : .8,
         zIndexOffset:selected ? 1000 : 0
       }).addTo(layers).bindTooltip(`候補: ${esc(c['候補名'])}`, selected ? { permanent:true, direction:'top', offset:[0,-12] } : {});
+      const markerElement = marker.getElement();
+      markerElement.dataset.candidate = c.candidate_id;
+      markerElement.setAttribute('aria-label', `候補: ${c['候補名']}`);
       marker.on('click', event => {
         L.DomEvent.stopPropagation(event);
         selectCandidate(c.candidate_id);
