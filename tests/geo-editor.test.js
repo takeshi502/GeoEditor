@@ -170,3 +170,31 @@ test('3カラムと地図は確定したGrid行の内側に収まる', () => {
   assert.match(client,/renderAll\(\);\s*await new Promise\(resolve => requestAnimationFrame\(resolve\)\);\s*map\.invalidateSize\(\{ pan:false \}\);\s*fitData\(\);/);
   assert.equal((client.match(/map\.invalidateSize/g)||[]).length,1);
 });
+
+test('地図候補マーカーと左一覧は共通の候補選択処理を使う', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/data-candidate[^\n]+selectCandidate\(el\.dataset\.candidate\)/);
+  assert.match(client,/marker\.on\('click',[\s\S]*?selectCandidate\(c\.candidate_id\)/);
+  assert.match(client,/state\.selectedCandidateId = candidateId/);
+  assert.match(client,/if \(state\.selectedCandidateId\) return renderCandidateEditor\(\)/);
+});
+
+test('候補選択は左一覧へ同期し、正式地点の地図コンテキストを維持する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
+  assert.match(client,/c\.candidate_id === state\.selectedCandidateId \? 'active'/);
+  assert.match(client,/requestAnimationFrame\(scrollSelectedCandidateIntoView\)/);
+  assert.match(client,/state\.mapContextPlaceId = state\.selectedPlaceId/);
+  assert.match(client,/const activePlaceId = state\.selectedPlaceId \|\| state\.mapContextPlaceId/);
+  assert.match(client,/candidate-icon\$\{selected \? ' selected' : ''\}/);
+  assert.match(styles,/\.candidate-icon\.selected/);
+});
+
+test('候補マーカー選択は未保存変更保護を通り、正式point選択を維持する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const selectCandidateBody=client.match(/function selectCandidate\(candidateId\) \{([\s\S]*?)\n  \}\n\n  function scrollSelectedCandidateIntoView/);
+  assert.ok(selectCandidateBody);
+  assert.match(selectCandidateBody[1],/if \(!canLeave\(\)\) return/);
+  assert.match(client,/marker\.on\('click', \(\) => point\.place_id && selectPlace\(point\.place_id, point\.point_id\)\)/);
+  assert.match(client,/candidateRead\('candidate_id',c\.candidate_id\)/);
+});
