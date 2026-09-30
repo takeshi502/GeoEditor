@@ -104,6 +104,42 @@ test('地点名だけの保存では未変更ポイントを書き換えずrevis
   assert.equal(places.sheet.writes.length,1);
 });
 
+test('数値由来の地点名を保持してpoint名だけ保存し、親placeを更新しない', () => {
+  const currentPlace=place({'地点名':5665,revision:3,'更新日時':'place-old'});
+  const currentPoint=point({'ポイント名':'メイン',revision:2,'更新日時':'point-old'});
+  const places=table('places',[currentPlace]), points=table('points',[currentPoint]);
+  context.withWriteLock_=fn=>fn();
+  context.spreadsheet_=()=>({});
+  context.readTable_=(_ss,key)=>key === 'places' ? places : points;
+  const result=context.savePlaceBundle_({
+    place:Object.assign({},currentPlace,{'地点名':'5665'}),
+    points:[Object.assign({},currentPoint,{'ポイント名':'5665'})]
+  });
+  assert.equal(result.data.place['地点名'],5665);
+  assert.equal(result.data.place.revision,3);
+  assert.equal(result.data.place['更新日時'],'place-old');
+  assert.equal(places.sheet.writes.length,0);
+  assert.equal(result.data.points[0]['ポイント名'],'5665');
+  assert.equal(result.data.points[0].revision,3);
+  assert.notEqual(result.data.points[0]['更新日時'],'point-old');
+  assert.equal(points.sheet.writes.length,1);
+});
+
+test('空の地点名による新規地点作成は引き続き拒否する', () => {
+  const places=table('places',[]), points=table('points',[]);
+  assert.throws(() => context.createPlaceBundleWithTables_({
+    place:place({place_id:undefined,revision:undefined,'地点名':''}),
+    points:[point({point_id:undefined,place_id:undefined,revision:undefined})]
+  },places,points), error => error.code === 'VALIDATION_ERROR' && /地点名/.test(error.message));
+});
+
+test('保存payloadは画面表示可能な数値由来地点名を文字列として送る', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/const place = clone\(state\.draftPlace\)/);
+  assert.match(client,/place\['地点名'\] = String\(place\['地点名'\] == null \? '' : place\['地点名'\]\)/);
+  assert.match(client,/server\('savePlaceBundle', \{ place, points, preserve_old_name:preserve \}\)/);
+});
+
 test('新規地点と初期pointを同時に生成する', () => {
   const places=table('places',[]), points=table('points',[]);
   const result=context.createPlaceBundleWithTables_({ place:place({place_id:undefined,revision:undefined}), points:[point({point_id:undefined,place_id:undefined,revision:undefined})] },places,points);

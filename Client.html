@@ -294,10 +294,12 @@
     let preserve = true;
     const originalName = state.original && state.original.place['地点名'];
     if (!isNew && originalName !== state.draftPlace['地点名']) preserve = confirm(`旧地点名「${originalName}」を別名として残しますか？\n\nOK: 別名に残す / キャンセル: 残さない`);
+    const place = clone(state.draftPlace);
+    place['地点名'] = String(place['地点名'] == null ? '' : place['地点名']);
     const points = state.draftPoints.map(p => { const copy = clone(p); delete copy._temp_id; return copy; });
     setBusy(true, '保存しています…');
     try {
-      const response = isNew ? await server('createPlaceBundle', { place:state.draftPlace, points }) : await server('savePlaceBundle', { place:state.draftPlace, points, preserve_old_name:preserve });
+      const response = isNew ? await server('createPlaceBundle', { place, points }) : await server('savePlaceBundle', { place, points, preserve_old_name:preserve });
       applyBundle(response.data, isNew); setDirty(false); showWarnings(response.warnings); selectPlace(response.data.place.place_id); toast('保存しました。');
     } catch (error) { showError(error); } finally { setBusy(false); }
   }

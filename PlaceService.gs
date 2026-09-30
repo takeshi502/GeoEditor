@@ -94,8 +94,9 @@ function savePlaceBundle_(payload) {
     assertRevision_(incomingPlace.revision, currentPlace.revision, '地点', currentPlace.revision);
 
     var now = nowIso_();
-    var place = normalizePlace_(incomingPlace, currentPlace.place_id, now, false, currentPlace);
-    if (place['地点名'] !== currentPlace['地点名'] && payload.preserve_old_name !== false) {
+    var placeChanged = !placeEditableEquals_(incomingPlace, currentPlace);
+    var place = placeChanged ? normalizePlace_(incomingPlace, currentPlace.place_id, now, false, currentPlace) : publicItem_(currentPlace);
+    if (placeChanged && String(place['地点名']) !== String(currentPlace['地点名']) && payload.preserve_old_name !== false) {
       place['別名'] = mergeAlias_(place['別名'], currentPlace['地点名']);
     }
     var existingForPlace = pointsTable.rows.filter(function (point) { return point.place_id === place.place_id; });
@@ -121,8 +122,10 @@ function savePlaceBundle_(payload) {
 
     var appendedRows = [];
     try {
-      placesTable.sheet.getRange(currentPlace._row, 1, 1, placesTable.headers.length)
-        .setValues([objectToRow_(place, placesTable.headers)]);
+      if (placeChanged) {
+        placesTable.sheet.getRange(currentPlace._row, 1, 1, placesTable.headers.length)
+          .setValues([objectToRow_(place, placesTable.headers)]);
+      }
       points.forEach(function (point) {
         var current = existingById[point.point_id];
         if (current) {
@@ -138,8 +141,10 @@ function savePlaceBundle_(payload) {
       });
     } catch (error) {
       try {
-        placesTable.sheet.getRange(currentPlace._row, 1, 1, placesTable.headers.length)
-          .setValues([objectToRow_(currentPlace, placesTable.headers)]);
+        if (placeChanged) {
+          placesTable.sheet.getRange(currentPlace._row, 1, 1, placesTable.headers.length)
+            .setValues([objectToRow_(currentPlace, placesTable.headers)]);
+        }
         existingForPlace.forEach(function (point) {
           pointsTable.sheet.getRange(point._row, 1, 1, pointsTable.headers.length)
             .setValues([objectToRow_(point, pointsTable.headers)]);
@@ -200,6 +205,15 @@ function pointEditableEquals_(incoming, current) {
     Number(incoming['判定半径_m']) === Number(current['判定半径_m']) &&
     Number(incoming['最大GPS精度_m']) === Number(current['最大GPS精度_m']) &&
     Number(incoming['優先度']) === Number(current['優先度']) &&
+    incoming['有効'] === current['有効'] &&
+    String(incoming['備考'] || '') === String(current['備考'] || '');
+}
+
+function placeEditableEquals_(incoming, current) {
+  return String(incoming['地点名']).trim() === String(current['地点名']).trim() &&
+    String(incoming.base_area_id || '') === String(current.base_area_id || '') &&
+    Number(incoming['優先度'] || 0) === Number(current['優先度'] || 0) &&
+    aliases_(incoming['別名']).join(', ') === aliases_(current['別名']).join(', ') &&
     incoming['有効'] === current['有効'] &&
     String(incoming['備考'] || '') === String(current['備考'] || '');
 }
