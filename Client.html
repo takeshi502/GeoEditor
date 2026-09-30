@@ -221,7 +221,7 @@
     const c = state.candidates.find(item => item.candidate_id === state.selectedCandidateId);
     if (!c) return;
     const initialSuggestion = suggest({ place_id:null, '中心緯度':c['基準緯度'], '中心経度':c['基準経度'] });
-    const options = state.places.filter(p => p['有効'] !== false).sort((a,b) => a['地点名'].localeCompare(b['地点名'],'ja')).map(p => `<option value="${esc(p.place_id)}">${esc(p['地点名'])}</option>`).join('');
+    const options = state.places.filter(p => p['有効'] !== false).sort((a,b) => String(a['地点名']).localeCompare(String(b['地点名']),'ja')).map(p => `<option value="${esc(p.place_id)}">${esc(p['地点名'])}</option>`).join('');
     $('candidateEditor').hidden = false;
     $('candidateEditor').innerHTML = `<h1>学習候補</h1>
       ${candidateRead('候補名',c['候補名'])}${candidateRead('確認回数',c['確認回数'])}${candidateRead('基準位置',`${c['基準緯度']}, ${c['基準経度']}`)}${candidateRead('GPS精度',`${c['GPS精度_m']}m`)}${candidateRead('最寄地点',c['最寄place_id'] || '—')}${candidateRead('距離',c['最寄地点距離_m'] == null ? '—' : `${c['最寄地点距離_m']}m`)}${candidateRead('候補状態',c['候補状態'])}${candidateRead('candidate_id',c.candidate_id)}

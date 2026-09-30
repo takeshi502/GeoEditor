@@ -199,4 +199,5 @@ test('候補マーカー選択は未保存変更保護を通り、正式point選
   assert.match(selectCandidateBody[1],/if \(!canLeave\(\)\) return/);
   assert.match(client,/marker\.on\('click', \(\) => point\.place_id && selectPlace\(point\.place_id, point\.point_id\)\)/);
   assert.match(client,/candidateRead\('candidate_id',c\.candidate_id\)/);
+  assert.match(client,/String\(a\['地点名'\]\)\.localeCompare\(String\(b\['地点名'\]\),'ja'\)/);
 });
