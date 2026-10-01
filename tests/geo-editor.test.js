@@ -191,26 +191,31 @@ test('論理削除は有効=falseとして保持する', () => {
   assert.equal(disabled.revision,2);
 });
 
-test('3カラムと地図は確定したGrid行の内側に収まる', () => {
+test('地点専用編集レイアウトと地図は確定したGrid行の内側に収まる', () => {
   const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
   const index=fs.readFileSync(path.join(root,'Index.html'),'utf8');
   assert.doesNotMatch(index,/leaflet@1\.9\.4\/dist\/leaflet\.css/);
+  assert.doesNotMatch(index,/unpkg\.com\/leaflet/);
+  assert.match(index,/include\('Leaflet'\)/);
+  assert.match(fs.readFileSync(path.join(root,'Leaflet.html'),'utf8'),/Leaflet 1\.9\.4/);
   assert.match(styles,/\.leaflet-pane[^}]*position:absolute;[^}]*left:0;[^}]*top:0;/);
   assert.match(styles,/\.leaflet-container \{[^}]*overflow:hidden;/);
-  assert.match(styles,/html, body \{[^}]*height:100%;[^}]*overflow:hidden;/);
-  assert.match(styles,/\.workspace \{[^}]*min-height:0;[^}]*grid-template-rows:minmax\(0, 1fr\);[^}]*overflow:hidden;/);
+  assert.match(styles,/html,body \{[^}]*height:100%;[^}]*overflow:hidden;/);
+  assert.match(styles,/\.workspace \{[^}]*min-height:0;[^}]*grid-template-rows:minmax\(0,1fr\);[^}]*overflow:hidden;/);
+  assert.match(styles,/\.workspace\.focus-mode \{[^}]*grid-template-columns:0 minmax\(0,1fr\)/);
+  assert.match(styles,/\.studio-grid\.place-mode \{[^}]*grid-template-columns:250px minmax\(420px,1fr\) 350px/);
   assert.match(styles,/\.panel \{[^}]*min-height:0;[^}]*overflow:auto;/);
   assert.match(styles,/\.map-panel \{[^}]*min-height:0;[^}]*overflow:hidden;/);
   assert.match(styles,/#map \{[^}]*height:100%;[^}]*min-height:0;[^}]*overflow:hidden;/);
   assert.match(client,/renderAll\(\);\s*await new Promise\(resolve => requestAnimationFrame\(resolve\)\);\s*map\.invalidateSize\(\{ pan:false \}\);\s*fitData\(\);/);
-  assert.equal((client.match(/map\.invalidateSize/g)||[]).length,1);
+  assert.ok((client.match(/map\.invalidateSize/g)||[]).length >= 2);
 });
 
 test('地図候補マーカーと左一覧は共通の候補選択処理を使う', () => {
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
   assert.match(client,/data-candidate[^\n]+selectCandidate\(el\.dataset\.candidate\)/);
-  assert.match(client,/marker\.on\('click',[\s\S]*?selectCandidate\(c\.candidate_id\)/);
+  assert.match(client,/marker\.on\('click', \(\) => selectCandidate\(c\.candidate_id\)\)/);
   assert.match(client,/markerElement\.dataset\.candidate = c\.candidate_id/);
   assert.match(client,/markerElement\.setAttribute\('aria-label', `候補: \$\{c\['候補名'\]\}`\)/);
   assert.match(client,/state\.selectedCandidateId = candidateId/);
@@ -232,8 +237,76 @@ test('候補マーカー選択は未保存変更保護を通り、正式point選
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
   const selectCandidateBody=client.match(/function selectCandidate\(candidateId\) \{([\s\S]*?)\n  \}\n\n  function scrollSelectedCandidateIntoView/);
   assert.ok(selectCandidateBody);
-  assert.match(selectCandidateBody[1],/if \(!canLeave\(\)\) return/);
-  assert.match(client,/marker\.on\('click', \(\) => point\.place_id && selectPlace\(point\.place_id, point\.point_id\)\)/);
+  assert.match(selectCandidateBody[1],/!canLeave\(\)/);
+  assert.match(client,/marker\.on\('click', \(\) => inContext \? selectPoint\(id\) : \(point\.place_id && selectPlace\(point\.place_id, point\.point_id\)\)\)/);
   assert.match(client,/candidateRead\('candidate_id',c\.candidate_id\)/);
   assert.match(client,/String\(a\['地点名'\]\)\.localeCompare\(String\(b\['地点名'\]\),'ja'\)/);
+});
+
+test('地点一覧から地点専用編集モードへ入り、地点全体へ戻れる', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const index=fs.readFileSync(path.join(root,'Index.html'),'utf8');
+  assert.match(index,/id="pointPanel"/);
+  assert.match(index,/id="placeOverviewBtn"/);
+  assert.match(index,/id="backToListBtn"/);
+  assert.match(client,/workspace'\)\.classList\.toggle\('focus-mode', focused\)/);
+  assert.match(client,/function showPlaceOverview\(\)[\s\S]*?state\.selectedPointId = null/);
+  assert.match(client,/function backToList\(force\)[\s\S]*?clearSelection\(\)/);
+});
+
+test('全乗降位置を常時一覧表示し、一覧と地図は共通のpoint選択処理を使う', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/state\.draftPoints\.map\(point =>/);
+  assert.match(client,/data-edit-point="\$\{esc\(id\)\}"/);
+  assert.match(client,/data-edit-point[^\n]+selectPoint\(el\.dataset\.editPoint\)/);
+  assert.match(client,/marker\.on\('click', \(\) => inContext \? selectPoint\(id\)/);
+  assert.match(client,/letter-icon\$\{isActive \? ' selected' : ''\}/);
+});
+
+test('乗降位置追加は位置指定・内容確認・保存のガイドを表示する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const index=fs.readFileSync(path.join(root,'Index.html'),'utf8');
+  assert.match(index,/id="placementGuide"/);
+  assert.match(client,/1 地図で位置を指定/);
+  assert.match(client,/2 名称と認識範囲/);
+  assert.match(client,/3 保存/);
+  assert.match(client,/state\.placement = 'add-point'/);
+  assert.match(client,/state\.addFlowPointId = point\._temp_id/);
+  assert.match(client,/function newPoint[\s\S]*?'ポイント名':''/);
+});
+
+test('位置移動は確定と元に戻すを備え、移動前座標を保持する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/state\.moveSession = \{ pointId:id, lat:point\['中心緯度'\], lng:point\['中心経度'\], wasDirty:state\.dirty \}/);
+  assert.match(client,/id="confirmMove"/);
+  assert.match(client,/id="cancelMove"/);
+  assert.match(client,/point\['中心緯度'\] = session\.lat/);
+  assert.match(client,/point\['中心経度'\] = session\.lng/);
+});
+
+test('認識範囲はスライダーと数値入力を同期し地図へ即時反映する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/id="point-radius-range" type="range"/);
+  assert.match(client,/range\.addEventListener\('input'/);
+  assert.match(client,/number\.addEventListener\('input'/);
+  assert.match(client,/point\['判定半径_m'\] = radius/);
+  assert.match(client,/renderMap\(\)/);
+});
+
+test('乗降位置の基本設定と詳細設定を分離し、親地点を常時表示する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/編集中の地点：\$\{esc\(state\.draftPlace\['地点名'\]/);
+  assert.match(client,/<h3>基本設定<\/h3>/);
+  assert.match(client,/<details class="advanced"><summary>詳細設定<\/summary>/);
+  assert.match(client,/GPS許容誤差（m）/);
+  assert.match(client,/判定優先度/);
+});
+
+test('候補処理は利用者向け用語で既存actionを維持する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/>乗降位置として追加<\/button>/);
+  assert.match(client,/resolveCandidateAction\('add_point'\)/);
+  assert.match(client,/resolveCandidateAction\('promote'\)/);
+  assert.match(client,/resolveCandidateAction\('merge'\)/);
+  assert.match(client,/resolveCandidateAction\('reject'\)/);
 });

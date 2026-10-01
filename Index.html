@@ -8,37 +8,71 @@
 </head>
 <body>
   <header class="topbar">
-    <div><strong>Geo Editor</strong><span class="version">v0.1</span></div>
+    <div class="brand"><strong>Geo Editor</strong><span class="version">v0.1</span></div>
     <div id="saveState" class="save-state">保存済み</div>
     <div class="top-actions">
       <button id="discardBtn" class="secondary" disabled>変更を破棄</button>
       <button id="saveBtn" class="primary" disabled>保存</button>
     </div>
   </header>
-  <main class="workspace">
-    <aside class="left-panel panel">
-      <label class="search"><span>検索</span><input id="searchInput" type="search" placeholder="地点名・別名・ポイント名・候補名"></label>
-      <section><h2>正式地点 <span id="placeCount"></span></h2><div id="placeList" class="item-list"></div></section>
+
+  <main id="workspace" class="workspace">
+    <aside class="left-panel panel" aria-label="地点一覧">
+      <div class="list-heading">
+        <div><span class="eyebrow">LOCATION LIBRARY</span><h1>地点を選ぶ</h1></div>
+        <button id="newPlaceBtn" class="primary">＋ 新規地点</button>
+      </div>
+      <label class="search"><span>地点・乗降位置を検索</span><input id="searchInput" type="search" placeholder="地点名・別名・乗降位置名"></label>
+      <section><h2>登録地点 <span id="placeCount"></span></h2><div id="placeList" class="item-list"></div></section>
       <section><h2>学習候補 <span id="candidateCount"></span></h2><div id="candidateList" class="item-list"></div></section>
     </aside>
-    <section class="map-panel">
-      <div class="map-toolbar">
-        <button id="newPlaceBtn">＋ 新規地点</button>
-        <button id="addPointBtn" disabled>＋ 判定ポイント追加</button>
-        <span id="mapHint">地点または候補を選択してください</span>
+
+    <section class="studio" aria-label="地点編集">
+      <header id="contextHeader" class="context-header">
+        <div>
+          <span class="eyebrow">COVERAGE EDITOR</span>
+          <h1 id="contextTitle">地点のカバー範囲を組み立てる</h1>
+          <p id="contextSummary">地点を選ぶと、乗降位置と認識範囲をまとめて確認できます。</p>
+        </div>
+      </header>
+
+      <div class="studio-grid">
+        <aside id="pointPanel" class="point-panel panel" hidden>
+          <div class="point-panel-head">
+            <div><span class="eyebrow">BOARDING SPOTS</span><h2>乗降位置</h2></div>
+            <button id="addPointBtn" class="compact primary" disabled>＋ 追加</button>
+          </div>
+          <button id="placeOverviewBtn" class="overview-button" type="button">
+            <span class="overview-icon">◎</span><span><strong>地点全体</strong><small>すべての認識範囲を見る</small></span>
+          </button>
+          <div id="pointList" class="studio-point-list"></div>
+          <div class="same-place-note">同じ地点の認識範囲は、重なっても問題ありません。</div>
+        </aside>
+
+        <section class="map-panel">
+          <div class="map-toolbar">
+            <button id="backToListBtn" class="back-button" hidden>← 地点一覧へ</button>
+            <span id="mapHint">地点または候補を選択してください</span>
+          </div>
+          <div id="placementGuide" class="placement-guide" hidden></div>
+          <div id="map"></div>
+          <div id="toast" class="toast" hidden></div>
+        </section>
+
+        <aside class="right-panel panel">
+          <div id="emptyEditor" class="empty-state">
+            <div class="empty-visual">◎</div>
+            <h2>1つの地点を、複数の乗降位置でカバー</h2>
+            <p>地点を選ぶと、各乗降位置の小さな認識範囲を地図上で組み合わせられます。</p>
+          </div>
+          <form id="placeEditor" class="editor" hidden></form>
+          <form id="pointEditor" class="editor" hidden></form>
+          <div id="candidateEditor" class="editor" hidden></div>
+        </aside>
       </div>
-      <div id="map"></div>
-      <div id="toast" class="toast" hidden></div>
     </section>
-    <aside class="right-panel panel">
-      <div id="emptyEditor" class="empty-state">左の一覧または地図から編集対象を選択してください。</div>
-      <form id="placeEditor" class="editor" hidden></form>
-      <form id="pointEditor" class="editor" hidden></form>
-      <div id="candidateEditor" class="editor" hidden></div>
-    </aside>
   </main>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <?!= include('Leaflet'); ?>
   <?!= include('Client'); ?>
 </body>
 </html>
