@@ -620,18 +620,28 @@
     return { 'ポイント名':'', '表示順':order, '中心緯度':latlng.lat, '中心経度':latlng.lng, '判定半径_m':50, '最大GPS精度_m':50, '優先度':100, '登録元':'geo_editor', '有効':true, '備考':'' };
   }
 
+  function buildSaveBundle() {
+    const place = clone(state.draftPlace);
+    place['地点名'] = String(place['地点名'] == null ? '' : place['地点名']);
+    const points = state.draftPoints.map(point => {
+      const copy = clone(point);
+      delete copy._temp_id;
+      copy['ポイント名'] = String(copy['ポイント名'] == null ? '' : copy['ポイント名']);
+      return copy;
+    });
+    return { place, points };
+  }
+
   async function save() {
     if (!state.draftPlace || !state.dirty) return;
-    if (!String(state.draftPlace['地点名'] || '').trim()) return toast('地点名を入力してください。');
-    const unnamed = state.draftPoints.find(p => !String(p['ポイント名'] || '').trim());
+    if (!String(state.draftPlace['地点名'] == null ? '' : state.draftPlace['地点名']).trim()) return toast('地点名を入力してください。');
+    const unnamed = state.draftPoints.find(p => !String(p['ポイント名'] == null ? '' : p['ポイント名']).trim());
     if (unnamed) { selectPoint(unnamed.point_id || unnamed._temp_id); return toast('乗降位置名を入力してください。'); }
     const isNew = !state.draftPlace.place_id;
     let preserve = true;
     const originalName = state.original && state.original.place['地点名'];
     if (!isNew && originalName !== state.draftPlace['地点名']) preserve = confirm(`旧地点名「${originalName}」を別名として残しますか？\n\nOK: 別名に残す / キャンセル: 残さない`);
-    const place = clone(state.draftPlace);
-    place['地点名'] = String(place['地点名'] == null ? '' : place['地点名']);
-    const points = state.draftPoints.map(p => { const copy = clone(p); delete copy._temp_id; return copy; });
+    const { place, points } = buildSaveBundle();
     setBusy(true, '保存しています…');
     try {
       const response = isNew ? await server('createPlaceBundle', { place, points }) : await server('savePlaceBundle', { place, points, preserve_old_name:preserve });

@@ -108,6 +108,53 @@ test('地点名だけの保存では未変更ポイントを書き換えずrevis
   assert.equal(places.sheet.writes.length,1);
 });
 
+test('数値由来のpoint名を保持して地点名だけ保存する', () => {
+  const currentPlace=place({'地点名':5679,revision:7,'更新日時':'place-old'});
+  const currentPoint=point({'ポイント名':5679,revision:5,'更新日時':'point-old'});
+  const places=table('places',[currentPlace]), points=table('points',[currentPoint]);
+  context.withWriteLock_=fn=>fn(); context.spreadsheet_=()=>({});
+  context.readTable_=(_ss,key)=>key === 'places' ? places : points;
+  const result=context.savePlaceBundle_({
+    place:Object.assign({},currentPlace,{'地点名':'メイン'}),
+    points:[Object.assign({},currentPoint,{'ポイント名':'5679'})]
+  });
+  assert.equal(result.data.place['地点名'],'メイン');
+  assert.equal(result.data.place.revision,8);
+  assert.notEqual(result.data.place['更新日時'],'place-old');
+  assert.equal(String(result.data.points[0]['ポイント名']),'5679');
+  assert.equal(result.data.points[0].revision,5);
+  assert.equal(result.data.points[0]['更新日時'],'point-old');
+  assert.equal(places.sheet.writes.length,1);
+  assert.equal(points.sheet.writes.length,0);
+});
+
+test('地点名とpoint名を同時変更すると両方のrevisionを更新する', () => {
+  const currentPlace=place({'地点名':'5679',revision:2,'更新日時':'place-old'});
+  const currentPoint=point({'ポイント名':'5679',revision:4,'更新日時':'point-old'});
+  const places=table('places',[currentPlace]), points=table('points',[currentPoint]);
+  context.withWriteLock_=fn=>fn(); context.spreadsheet_=()=>({});
+  context.readTable_=(_ss,key)=>key === 'places' ? places : points;
+  const result=context.savePlaceBundle_({
+    place:Object.assign({},currentPlace,{'地点名':'メイン'}),
+    points:[Object.assign({},currentPoint,{'ポイント名':'正面入口'})]
+  });
+  assert.equal(result.data.place.revision,3);
+  assert.equal(result.data.points[0].revision,5);
+  assert.equal(places.sheet.writes.length,1);
+  assert.equal(points.sheet.writes.length,1);
+});
+
+test('新規pointのポイント名が空ならvalidationを維持する', () => {
+  const currentPlace=place(), currentPoint=point();
+  const places=table('places',[currentPlace]), points=table('points',[currentPoint]);
+  context.withWriteLock_=fn=>fn(); context.spreadsheet_=()=>({});
+  context.readTable_=(_ss,key)=>key === 'places' ? places : points;
+  assert.throws(() => context.savePlaceBundle_({
+    place:currentPlace,
+    points:[currentPoint,point({point_id:undefined,place_id:'a','ポイント名':'','表示順':2,revision:undefined})]
+  }), error => error.code === 'VALIDATION_ERROR' && /ポイント名/.test(error.message));
+});
+
 test('数値由来の地点名を保持してpoint名だけ保存し、親placeを更新しない', () => {
   const currentPlace=place({'地点名':5665,revision:3,'更新日時':'place-old'});
   const currentPoint=point({'ポイント名':'メイン',revision:2,'更新日時':'point-old'});
@@ -139,8 +186,11 @@ test('空の地点名による新規地点作成は引き続き拒否する', ()
 
 test('保存payloadは画面表示可能な数値由来地点名を文字列として送る', () => {
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/function buildSaveBundle\(\)/);
   assert.match(client,/const place = clone\(state\.draftPlace\)/);
   assert.match(client,/place\['地点名'\] = String\(place\['地点名'\] == null \? '' : place\['地点名'\]\)/);
+  assert.match(client,/copy\['ポイント名'\] = String\(copy\['ポイント名'\] == null \? '' : copy\['ポイント名'\]\)/);
+  assert.match(client,/const \{ place, points \} = buildSaveBundle\(\)/);
   assert.match(client,/server\('savePlaceBundle', \{ place, points, preserve_old_name:preserve \}\)/);
 });
 
