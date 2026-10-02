@@ -54,6 +54,7 @@
   .item-list { display:flex; flex-direction:column; gap:4px; }
   .list-item { width:100%; text-align:left; padding:9px 10px; border:1px solid transparent; border-radius:9px; background:transparent; }
   .list-item:hover,.list-item.active { background:#eef5ff; border-color:#c8dcfb; }
+  .list-item.merge-target { background:#e9f8f2; border-color:#8dd5bd; }
   .list-title { font-weight:700; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .list-meta { font-size:11px; color:var(--muted); display:block; margin-top:3px; }
 
@@ -117,5 +118,24 @@
   .candidate-icon { background:#f79009; color:white; border:2px solid white; border-radius:50%; width:20px!important; height:20px!important; box-shadow:0 1px 4px #0004; }
   .candidate-icon.selected { width:26px!important; height:26px!important; border-width:3px; box-shadow:0 0 0 4px #f7900940,0 2px 7px #0006; }
   .candidate-actions { border-top:1px solid var(--line); margin-top:16px; padding-top:5px; }
+  .candidate-choice { border:1px solid var(--line); border-radius:10px; padding:12px; margin-top:10px; display:grid; gap:6px; }
+  .candidate-choice small { color:var(--muted); line-height:1.45; }
+  .candidate-choice button { justify-self:start; margin-top:3px; }
+  .merge-role { border:1px solid var(--line); border-radius:11px; padding:13px; margin:10px 0; display:grid; gap:4px; }
+  .merge-role span { color:var(--muted); font-size:11px; font-weight:700; }
+  .merge-role strong { font-size:18px; }
+  .merge-role small { color:var(--muted); line-height:1.45; }
+  .merge-role.target { background:#eefaf6; border-color:#9bd8c4; }
+  .merge-role.source { background:#fff7ed; border-color:#f2c68c; }
+  .merge-arrow { text-align:center; color:#16825d; font-weight:800; font-size:12px; margin:3px 0; }
+  .merge-candidates { display:grid; gap:6px; max-height:310px; overflow:auto; }
+  .merge-place-card { width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; text-align:left; }
+  .merge-place-card span { min-width:0; }
+  .merge-place-card strong,.merge-place-card small { display:block; }
+  .merge-place-card small { color:var(--muted); margin-top:3px; }
+  .merge-place-card b { color:#16825d; white-space:nowrap; font-size:12px; }
+  .merge-point { display:flex; align-items:center; gap:9px; border-bottom:1px solid var(--line); padding:9px 2px; }
+  .merge-point strong,.merge-point small { display:block; }
+  .merge-point small { color:var(--muted); margin-top:2px; font-size:11px; }
   @media (max-width:1100px) { .studio-grid.place-mode { grid-template-columns:220px minmax(360px,1fr) 330px; } .workspace { grid-template-columns:270px minmax(0,1fr); } }
 </style>

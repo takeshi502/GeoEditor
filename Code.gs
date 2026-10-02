@@ -25,6 +25,10 @@ function savePlaceBundle(payload) {
   return apiCall_(function () { return savePlaceBundle_(payload); });
 }
 
+function mergePlaces(payload) {
+  return apiCall_(function () { return mergePlaces_(payload); });
+}
+
 function resolveCandidate(payload) {
   return apiCall_(function () { return resolveCandidate_(payload); });
 }

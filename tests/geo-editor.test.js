@@ -12,7 +12,7 @@ const context = vm.createContext({
   isFinite, parseInt, parseFloat,
   Utilities: { getUuid: () => `uuid-${++uuidCounter}` }
 });
-for (const name of ['Schema.gs','Code.gs','Validation.gs','GeoMath.gs','PlaceService.gs','CandidateService.gs']) {
+for (const name of ['Schema.gs','Code.gs','Validation.gs','GeoMath.gs','PlaceService.gs','PlaceMergeService.gs','CandidateService.gs']) {
   vm.runInContext(fs.readFileSync(path.join(root, name), 'utf8'), context, { filename:name });
 }
 
@@ -29,6 +29,10 @@ function fakeSheet(headers, rows) {
     getRange(row, col, height, width) {
       return {
         setValues: values => {
+          if (Number.isInteger(sheet.failAfter)) {
+            if (sheet.failAfter === 0) { sheet.failAfter = null; throw new Error('simulated write failure'); }
+            sheet.failAfter -= 1;
+          }
           values.forEach((valuesRow, offset) => {
             const object = {}; headers.forEach((h,i) => { object[h] = valuesRow[i]; });
             const index = row - 2 + offset;
@@ -183,6 +187,61 @@ test('candidate reject', () => {
   assert.equal(t.candidates.sheet.rows[0]['候補状態'],'rejected');
 });
 
+function mergeHarness() {
+  const places=table('places',[place(),place({place_id:'b','地点名':'B',revision:4})]);
+  const points=table('points',[point(),point({point_id:'p2',place_id:'b','ポイント名':'裏側入口','表示順':1,revision:3})]);
+  context.withWriteLock_=fn=>fn(); context.spreadsheet_=()=>({});
+  context.readTable_=(_ss,key)=>key === 'places' ? places : points;
+  return {places,points};
+}
+
+function mergePayload(overrides={}) {
+  return Object.assign({
+    source_place_id:'b', source_revision:4,
+    target_place_id:'a', target_revision:1,
+    preserve_source_name:true,
+    point_revisions:[{point_id:'p1',revision:1},{point_id:'p2',revision:3}]
+  },overrides);
+}
+
+test('登録地点どうしを統合しpoint_idを維持して移管・再採番する', () => {
+  const t=mergeHarness();
+  const result=context.mergePlaces_(mergePayload());
+  assert.equal(result.data.place.place_id,'a');
+  assert.equal(result.data.place.revision,2);
+  assert.match(result.data.place['別名'],/(^|, )B($|,)/);
+  assert.equal(result.data.merged_place.place_id,'b');
+  assert.equal(result.data.merged_place['有効'],false);
+  assert.equal(result.data.merged_place.revision,5);
+  assert.match(result.data.merged_place['備考'],/aへ統合/);
+  assert.deepEqual(Array.from(result.data.points,p=>p.point_id),['p1','p2']);
+  assert.deepEqual(Array.from(result.data.points,p=>p.place_id),['a','a']);
+  assert.deepEqual(Array.from(result.data.points,p=>p['表示順']),[1,2]);
+  assert.equal(result.data.points[0].revision,1);
+  assert.equal(result.data.points[1].revision,4);
+});
+
+test('地点統合は同名を別名へ重複追加せず、全revisionを検証する', () => {
+  let t=mergeHarness();
+  t.places.rows[1]['地点名']='A'; t.places.sheet.rows[1]['地点名']='A';
+  const result=context.mergePlaces_(mergePayload());
+  assert.equal(result.data.place['別名'],'');
+  t=mergeHarness();
+  assert.throws(() => context.mergePlaces_(mergePayload({source_revision:3})), e => e.code === 'REVISION_CONFLICT');
+  t=mergeHarness();
+  assert.throws(() => context.mergePlaces_(mergePayload({point_revisions:[{point_id:'p1',revision:1},{point_id:'p2',revision:2}]})), e => e.code === 'REVISION_CONFLICT');
+});
+
+test('地点統合の途中失敗はplaceとpointを補償復元する', () => {
+  const t=mergeHarness();
+  const beforePlaces=JSON.parse(JSON.stringify(t.places.sheet.rows));
+  const beforePoints=JSON.parse(JSON.stringify(t.points.sheet.rows));
+  t.points.sheet.failAfter=0;
+  assert.throws(() => context.mergePlaces_(mergePayload()), /simulated write failure/);
+  assert.deepEqual(t.places.sheet.rows.map(row => Object.fromEntries(t.places.headers.map(h => [h,row[h] == null ? '' : row[h]]))), beforePlaces.map(row => Object.fromEntries(t.places.headers.map(h => [h,row[h] == null ? '' : row[h]]))));
+  assert.deepEqual(t.points.sheet.rows.map(row => Object.fromEntries(t.points.headers.map(h => [h,row[h] == null ? '' : row[h]]))), beforePoints.map(row => Object.fromEntries(t.points.headers.map(h => [h,row[h] == null ? '' : row[h]]))));
+});
+
 test('論理削除は有効=falseとして保持する', () => {
   const now='2026-01-01T00:00:00.000Z';
   const disabled=context.normalizePoint_(point({'有効':false}),'p1','a',now,false,point());
@@ -238,9 +297,9 @@ test('候補マーカー選択は未保存変更保護を通り、正式point選
   const selectCandidateBody=client.match(/function selectCandidate\(candidateId\) \{([\s\S]*?)\n  \}\n\n  function scrollSelectedCandidateIntoView/);
   assert.ok(selectCandidateBody);
   assert.match(selectCandidateBody[1],/!canLeave\(\)/);
-  assert.match(client,/marker\.on\('click', \(\) => inContext \? selectPoint\(id\) : \(point\.place_id && selectPlace\(point\.place_id, point\.point_id\)\)\)/);
+  assert.match(client,/marker\.on\('click', \(\) => inContext \? selectPoint\(id\) : \(point\.place_id && \(state\.mergeFlow \? chooseMergeTarget\(point\.place_id\) : selectPlace\(point\.place_id, point\.point_id\)\)\)\)/);
   assert.match(client,/candidateRead\('candidate_id',c\.candidate_id\)/);
-  assert.match(client,/String\(a\['地点名'\]\)\.localeCompare\(String\(b\['地点名'\]\),'ja'\)/);
+  assert.match(client,/a\.distance-b\.distance \|\| String\(a\.place\['地点名'\]\)\.localeCompare\(String\(b\.place\['地点名'\]\),'ja'\)/);
 });
 
 test('地点一覧から地点専用編集モードへ入り、地点全体へ戻れる', () => {
@@ -309,4 +368,27 @@ test('候補処理は利用者向け用語で既存actionを維持する', () =>
   assert.match(client,/resolveCandidateAction\('promote'\)/);
   assert.match(client,/resolveCandidateAction\('merge'\)/);
   assert.match(client,/resolveCandidateAction\('reject'\)/);
+  assert.match(client,/② 既存地点にまとめる/);
+  assert.match(client,/同じ場所・同じ乗降位置として扱います/);
+  assert.match(client,/③ 既存地点の乗降位置として追加/);
+});
+
+test('地点をまとめるUIは近隣・検索・地図選択と確認を共通処理へつなぐ', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/id="startMergePlace">この地点を別の地点にまとめる/);
+  assert.match(client,/function startMergeFlow\(\)/);
+  assert.match(client,/function chooseMergeTarget\(placeId\)/);
+  assert.match(client,/state\.mergeFlow \? chooseMergeTarget\(el\.dataset\.place\) : selectPlace/);
+  assert.match(client,/state\.mergeFlow \? chooseMergeTarget\(point\.place_id\) : selectPlace/);
+  assert.match(client,/近くの地点/);
+  assert.match(client,/残す地点/);
+  assert.match(client,/まとめる地点/);
+  assert.match(client,/この内容でまとめる/);
+  assert.match(client,/server\('mergePlaces', payload\)/);
+});
+
+test('無効化済みの旧地点は通常一覧と地図から除外する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/state\.places\.filter\(p => p\['有効'\] !== false/);
+  assert.match(client,/isPlaceActive\(p\.place_id\)/);
 });

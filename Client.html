@@ -7,7 +7,7 @@
     mapContextPlaceId: null, mapContextPointId: null,
     draftPlace: null, draftPoints: [], original: null,
     dirty: false, placement: null, addFlowPointId: null, dragPointId: null,
-    moveSession: null, query: ''
+    moveSession: null, mergeFlow: null, query: ''
   };
   const $ = id => document.getElementById(id);
   const esc = value => String(value == null ? '' : value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -63,13 +63,14 @@
     const q = state.query.toLocaleLowerCase('ja');
     const pointNames = {};
     state.points.forEach(p => { (pointNames[p.place_id] ||= []).push(p['ポイント名']); });
-    const places = state.places.filter(p => [p['地点名'], p['別名'], ...(pointNames[p.place_id] || [])].join(' ').toLocaleLowerCase('ja').includes(q));
+    const places = state.places.filter(p => p['有効'] !== false && [p['地点名'], p['別名'], ...(pointNames[p.place_id] || [])].join(' ').toLocaleLowerCase('ja').includes(q));
     $('placeCount').textContent = `${places.length}件`;
     $('placeList').innerHTML = places.map(p => {
       const count = state.points.filter(point => point.place_id === p.place_id && point['有効'] !== false).length;
-      return `<button class="list-item ${p.place_id === state.selectedPlaceId ? 'active' : ''}" data-place="${esc(p.place_id)}"><span class="list-title">${esc(p['地点名'])}</span><span class="list-meta">乗降位置 ${count}か所 · ${esc(p['別名'] || p.place_id)}</span></button>`;
+      const active = state.mergeFlow && p.place_id === state.mergeFlow.targetPlaceId ? 'merge-target' : p.place_id === state.selectedPlaceId ? 'active' : '';
+      return `<button class="list-item ${active}" data-place="${esc(p.place_id)}"><span class="list-title">${esc(p['地点名'])}</span><span class="list-meta">乗降位置 ${count}か所 · ${esc(p['別名'] || p.place_id)}</span></button>`;
     }).join('') || '<div class="list-meta">該当なし</div>';
-    $('placeList').querySelectorAll('[data-place]').forEach(el => el.addEventListener('click', () => selectPlace(el.dataset.place)));
+    $('placeList').querySelectorAll('[data-place]').forEach(el => el.addEventListener('click', () => state.mergeFlow ? chooseMergeTarget(el.dataset.place) : selectPlace(el.dataset.place)));
 
     const candidates = state.candidates.filter(c => !['promoted','merged','rejected'].includes(c['候補状態']) && String(c['候補名']).toLocaleLowerCase('ja').includes(q));
     $('candidateCount').textContent = `${candidates.length}件`;
@@ -78,13 +79,13 @@
   }
 
   function renderWorkspace() {
-    const focused = !!(state.draftPlace || state.selectedCandidateId || state.placement === 'new-place');
+    const focused = !!(state.draftPlace || state.selectedCandidateId || state.placement === 'new-place') && !state.mergeFlow;
     $('workspace').classList.toggle('focus-mode', focused);
     $('backToListBtn').hidden = !focused;
     const placeMode = !!state.draftPlace;
     document.querySelector('.studio-grid').classList.toggle('place-mode', placeMode);
     $('pointPanel').hidden = !placeMode;
-    $('addPointBtn').disabled = !placeMode || !!state.placement;
+    $('addPointBtn').disabled = !placeMode || !!state.placement || !!state.mergeFlow;
     if (placeMode) {
       const count = state.draftPoints.filter(p => p['有効'] !== false).length;
       $('contextTitle').textContent = String(state.draftPlace['地点名'] || '新しい地点');
@@ -120,11 +121,12 @@
     const contextPoints = state.selectedPlaceId ? state.draftPoints : activePlaceId ? state.points.filter(p => p.place_id === activePlaceId) : [];
     const activePointId = state.selectedPointId || state.mapContextPointId;
     const selectedCenter = contextPoints.find(p => p.point_id === activePointId || p._temp_id === activePointId) || contextPoints[0];
-    const allPoints = state.points.filter(p => p['有効'] !== false && p.place_id !== activePlaceId).concat(contextPoints);
+    const allPoints = state.points.filter(p => p['有効'] !== false && isPlaceActive(p.place_id) && p.place_id !== activePlaceId).concat(contextPoints);
     allPoints.forEach(point => {
       const inContext = point.place_id === activePlaceId || contextPoints.includes(point);
       const id = point.point_id || point._temp_id;
       const isActive = inContext && id === activePointId;
+      const isMergeTarget = !!(state.mergeFlow && point.place_id === state.mergeFlow.targetPlaceId);
       const nearby = !selectedCenter || distance(point, selectedCenter) < 1000;
       if (!inContext && selectedCenter && nearby) {
         L.circle([point['中心緯度'], point['中心経度']], { radius:point['判定半径_m'], color:'#7d8da4', weight:1, opacity:.25, fillOpacity:.018, interactive:false }).addTo(layers);
@@ -142,14 +144,14 @@
           weight:isActive ? 3 : 2, opacity:isActive ? 1 : .65, fillOpacity:isActive ? .14 : .065, interactive:false
         }).addTo(layers);
       } else {
-        marker = L.circleMarker([point['中心緯度'], point['中心経度']], { radius:4, color:'#52647a', weight:1, fillOpacity:.35, opacity:.35 }).addTo(layers);
+        marker = L.circleMarker([point['中心緯度'], point['中心経度']], { radius:isMergeTarget ? 8 : 4, color:isMergeTarget ? '#16825d' : '#52647a', weight:isMergeTarget ? 3 : 1, fillOpacity:isMergeTarget ? .8 : .35, opacity:state.mergeFlow ? .85 : .35 }).addTo(layers);
       }
       marker.bindTooltip(`${esc(inContext ? pointLetter(point) + ' ' : '')}${esc(point['ポイント名'])}<br>${esc(placeName(point.place_id))}`);
       const pointMarkerElement = marker.getElement();
       if (pointMarkerElement) {
         pointMarkerElement.dataset.point = id || '';
       }
-      marker.on('click', () => inContext ? selectPoint(id) : (point.place_id && selectPlace(point.place_id, point.point_id)));
+      marker.on('click', () => inContext ? selectPoint(id) : (point.place_id && (state.mergeFlow ? chooseMergeTarget(point.place_id) : selectPlace(point.place_id, point.point_id))));
       if (inContext) marker.on('dragend', event => previewMovedPoint(point, event.target.getLatLng()));
     });
     state.candidates.filter(c => !['promoted','merged','rejected'].includes(c['候補状態'])).forEach(c => {
@@ -177,6 +179,7 @@
     return String.fromCharCode(65 + Math.max(0, index));
   }
   function placeName(id) { return (state.places.find(p => p.place_id === id) || {})['地点名'] || (state.draftPlace && state.draftPlace['地点名']) || '新しい地点'; }
+  function isPlaceActive(id) { const place = state.places.find(p => p.place_id === id); return !!place && place['有効'] !== false; }
 
   function selectPlace(placeId, pointId) {
     if (!canLeave()) return;
@@ -258,6 +261,7 @@
     $('placeEditor').hidden = true;
     $('pointEditor').hidden = true;
     $('candidateEditor').hidden = true;
+    if (state.mergeFlow) return renderMergeEditor();
     if (state.selectedCandidateId) return renderCandidateEditor();
     if (!state.draftPlace) return;
     if (state.selectedPointId) return renderPointEditor();
@@ -274,7 +278,7 @@
       ${field('地点名','place-name',p['地点名'],'text',null,'例：5703、北前ローソン')}
       ${field('別名','place-alias',p['別名'],'text',null,'検索に使う旧名称など')}
       <div class="field"><label>所属する基地</label><select id="place-base">${baseOptions}</select></div>
-      <button type="button" id="overviewAddPoint" class="primary">＋ この地点に乗降位置を追加</button>
+      <div class="button-row"><button type="button" id="overviewAddPoint" class="primary">＋ この地点に乗降位置を追加</button>${p.place_id ? '<button type="button" id="startMergePlace">この地点を別の地点にまとめる</button>' : ''}</div>
       <details class="advanced"><summary>地点の詳細設定</summary>
         <div class="field row">${field('判定優先度','place-priority',p['優先度'],'number')}<label class="check"><input id="place-active" type="checkbox" ${p['有効'] ? 'checked' : ''}>この地点を有効にする</label></div>
         ${area('備考','place-note',p['備考'])}
@@ -288,6 +292,7 @@
     bindValue('place-note', v => p['備考'] = v);
     $('place-active').addEventListener('change', e => { p['有効'] = e.target.checked; markDirty(); });
     $('overviewAddPoint').addEventListener('click', startAddPoint);
+    if ($('startMergePlace')) $('startMergePlace').addEventListener('click', startMergeFlow);
   }
 
   function renderPointEditor() {
@@ -379,21 +384,147 @@
     toast('移動前の位置に戻しました。');
   }
 
+  function startMergeFlow() {
+    if (!state.draftPlace || !state.draftPlace.place_id) return;
+    if (state.dirty) return toast('先に編集中の変更を保存するか破棄してください。');
+    state.selectedPointId = null;
+    state.mergeFlow = { sourcePlaceId:state.draftPlace.place_id, targetPlaceId:null, preserveAlias:true, query:'' };
+    renderAll();
+    fitMergeCandidates();
+    toast('残す地点を、近くの地点・検索・地図から選んでください。');
+  }
+
+  function chooseMergeTarget(placeId) {
+    if (!state.mergeFlow) return;
+    if (placeId === state.mergeFlow.sourcePlaceId) return toast('まとめる地点とは別の、残す地点を選んでください。');
+    const target = state.places.find(p => p.place_id === placeId && p['有効'] !== false);
+    if (!target) return;
+    state.mergeFlow.targetPlaceId = placeId;
+    renderAll();
+    fitMergeCandidates();
+  }
+
+  function cancelMergeFlow() {
+    state.mergeFlow = null;
+    state.query = '';
+    $('searchInput').value = '';
+    renderAll();
+    fitCurrentPlace();
+  }
+
+  function mergeDistance(placeId) {
+    const sourcePoints = state.points.filter(p => p.place_id === state.mergeFlow.sourcePlaceId && p['有効'] !== false);
+    const targetPoints = state.points.filter(p => p.place_id === placeId && p['有効'] !== false);
+    if (!sourcePoints.length || !targetPoints.length) return Infinity;
+    return Math.min(...sourcePoints.flatMap(a => targetPoints.map(b => distance(a,b))));
+  }
+
+  function mergeCandidates() {
+    const q = String(state.mergeFlow.query || '').trim().toLocaleLowerCase('ja');
+    return state.places.filter(p => p['有効'] !== false && p.place_id !== state.mergeFlow.sourcePlaceId)
+      .filter(p => !q || `${p['地点名']} ${p['別名'] || ''}`.toLocaleLowerCase('ja').includes(q))
+      .map(p => ({ place:p, distance:mergeDistance(p.place_id) }))
+      .sort((a,b) => a.distance - b.distance || String(a.place['地点名']).localeCompare(String(b.place['地点名']),'ja'));
+  }
+
+  function fitMergeCandidates() {
+    if (!state.mergeFlow) return;
+    const ids = [state.mergeFlow.sourcePlaceId, state.mergeFlow.targetPlaceId].filter(Boolean);
+    const coords = state.points.filter(p => ids.includes(p.place_id) && p['有効'] !== false).map(p => [p['中心緯度'],p['中心経度']]);
+    if (coords.length === 1) map.setView(coords[0],17);
+    else if (coords.length) map.fitBounds(L.latLngBounds(coords), { padding:[80,80], maxZoom:17 });
+  }
+
+  function renderMergeEditor() {
+    const flow = state.mergeFlow;
+    const source = state.places.find(p => p.place_id === flow.sourcePlaceId);
+    const target = state.places.find(p => p.place_id === flow.targetPlaceId);
+    const candidates = mergeCandidates();
+    $('placeEditor').hidden = false;
+    if (!target) {
+      const nearby = candidates.slice(0,20).map(item => {
+        const count = state.points.filter(p => p.place_id === item.place.place_id && p['有効'] !== false).length;
+        const distanceLabel = Number.isFinite(item.distance) ? `${Math.round(item.distance)}m` : '距離不明';
+        return `<button type="button" class="merge-place-card" data-merge-target="${esc(item.place.place_id)}"><span><strong>${esc(item.place['地点名'])}</strong><small>乗降位置 ${count}か所</small></span><b>${distanceLabel}</b></button>`;
+      }).join('');
+      $('placeEditor').innerHTML = `<div class="editor-header"><span class="eyebrow">STEP 1 / 2</span><h1>残す地点を選ぶ</h1><p class="list-meta">「${esc(source['地点名'])}」を、どの地点へまとめるか選んでください。</p></div>
+        <div class="merge-role source"><span>まとめる地点</span><strong>${esc(source['地点名'])}</strong><small>統合後は無効になり、乗降位置はすべて移動します</small></div>
+        <div class="field"><label for="merge-search">地点を検索</label><input id="merge-search" type="search" value="${esc(flow.query)}" placeholder="地点名・別名"></div>
+        <h3>近くの地点</h3><div class="merge-candidates">${nearby || '<div class="list-meta">該当する地点がありません</div>'}</div>
+        <div class="field-help">左の地点一覧や、地図上の別地点マーカーからも選べます。</div>
+        <div class="button-row"><button type="button" id="cancelMerge">キャンセル</button></div>`;
+      $('merge-search').addEventListener('input', e => { flow.query=e.target.value; renderMergeEditor(); });
+      $('placeEditor').querySelectorAll('[data-merge-target]').forEach(el => el.addEventListener('click', () => chooseMergeTarget(el.dataset.mergeTarget)));
+      $('cancelMerge').addEventListener('click', cancelMergeFlow);
+      return;
+    }
+
+    const targetPoints = state.points.filter(p => p.place_id === target.place_id).sort((a,b) => Number(a['表示順'])-Number(b['表示順']));
+    const sourcePoints = state.points.filter(p => p.place_id === source.place_id).sort((a,b) => Number(a['表示順'])-Number(b['表示順']));
+    const resultPoints = targetPoints.concat(sourcePoints);
+    const differentName = String(source['地点名']).trim() !== String(target['地点名']).trim();
+    $('placeEditor').innerHTML = `<div class="editor-header"><span class="eyebrow">STEP 2 / 2</span><h1>統合後の内容を確認</h1><p class="list-meta">2つの登録地点を1つにまとめます。</p></div>
+      <div class="merge-role target"><span>残す地点</span><strong>${esc(target['地点名'])}</strong><small>この地点のplace_idを維持します</small></div>
+      <div class="merge-arrow">↑ ここへまとめる</div>
+      <div class="merge-role source"><span>まとめる地点</span><strong>${esc(source['地点名'])}</strong><small>統合後は無効になります</small></div>
+      <h3>移動する乗降位置</h3>${sourcePoints.map((p,i) => `<div class="merge-point"><span class="badge">${String.fromCharCode(65+targetPoints.length+i)}</span><span><strong>${esc(p['ポイント名'])}</strong><small>point_idを変えずに移動</small></span></div>`).join('') || '<div class="list-meta">乗降位置なし</div>'}
+      <div class="summary-card"><strong>統合後：${esc(target['地点名'])}・乗降位置 ${resultPoints.length}か所</strong><p>${resultPoints.map((p,i) => `${String.fromCharCode(65+i)} ${esc(p['ポイント名'])}`).join('<br>')}</p></div>
+      ${differentName ? `<label class="check"><input id="merge-alias" type="checkbox" ${flow.preserveAlias ? 'checked' : ''}>「${esc(source['地点名'])}」を別名として残す</label>` : '<div class="field-help">地点名が同じため、別名は重複追加しません。</div>'}
+      <div class="warning">この操作で元の地点は無効になります。過去ログは変更しません。</div>
+      <div class="button-row"><button type="button" id="backMergeTarget">統合先を選び直す</button><button type="button" id="cancelMerge">キャンセル</button><button type="button" id="executeMerge" class="primary">この内容でまとめる</button></div>`;
+    if ($('merge-alias')) $('merge-alias').addEventListener('change', e => { flow.preserveAlias=e.target.checked; });
+    $('backMergeTarget').addEventListener('click', () => { flow.targetPlaceId=null; renderAll(); fitMergeCandidates(); });
+    $('cancelMerge').addEventListener('click', cancelMergeFlow);
+    $('executeMerge').addEventListener('click', executePlaceMerge);
+  }
+
+  async function executePlaceMerge() {
+    const flow = state.mergeFlow;
+    const source = state.places.find(p => p.place_id === flow.sourcePlaceId);
+    const target = state.places.find(p => p.place_id === flow.targetPlaceId);
+    if (!source || !target) return;
+    if (!confirm(`この操作で2つの登録地点を1つにまとめます。\n\n残す地点：${target['地点名']}\nまとめる地点：${source['地点名']}\n\n元の地点は無効になります。実行しますか？`)) return;
+    const relevantPoints = state.points.filter(p => p.place_id === source.place_id || p.place_id === target.place_id);
+    const payload = {
+      source_place_id:source.place_id, source_revision:source.revision,
+      target_place_id:target.place_id, target_revision:target.revision,
+      preserve_source_name:flow.preserveAlias,
+      point_revisions:relevantPoints.map(p => ({ point_id:p.point_id, revision:p.revision }))
+    };
+    setBusy(true, '地点をまとめています…');
+    try {
+      const response = await server('mergePlaces', payload);
+      showWarnings(response.warnings);
+      await reload();
+      selectPlace(target.place_id);
+      toast(`「${source['地点名']}」を「${target['地点名']}」へまとめました。`);
+    } catch (error) { showError(error); }
+    finally { setBusy(false); }
+  }
+
   function renderCandidateEditor() {
     const c = state.candidates.find(item => item.candidate_id === state.selectedCandidateId);
     if (!c) return;
     const initialSuggestion = suggest({ place_id:null, '中心緯度':c['基準緯度'], '中心経度':c['基準経度'] });
-    const options = state.places.filter(p => p['有効'] !== false).sort((a,b) => String(a['地点名']).localeCompare(String(b['地点名']),'ja')).map(p => `<option value="${esc(p.place_id)}">${esc(p['地点名'])}</option>`).join('');
+    const candidateLocation = { '中心緯度':c['基準緯度'], '中心経度':c['基準経度'] };
+    const options = state.places.filter(p => p['有効'] !== false).map(p => {
+      const placePoints = state.points.filter(point => point.place_id === p.place_id && point['有効'] !== false);
+      const nearest = placePoints.length ? Math.min(...placePoints.map(point => distance(candidateLocation,point))) : Infinity;
+      return { place:p, distance:nearest };
+    }).sort((a,b) => a.distance-b.distance || String(a.place['地点名']).localeCompare(String(b.place['地点名']),'ja'))
+      .map(item => `<option value="${esc(item.place.place_id)}">${esc(item.place['地点名'])}${Number.isFinite(item.distance) ? `（${Math.round(item.distance)}m）` : ''}</option>`).join('');
     $('candidateEditor').hidden = false;
-    $('candidateEditor').innerHTML = `<div class="editor-header"><span class="eyebrow">LEARNING CANDIDATE</span><h1>${esc(c['候補名'])}</h1><p class="list-meta">周辺地図を見ながら登録方法を選んでください</p></div>
+    $('candidateEditor').innerHTML = `<div class="editor-header"><span class="eyebrow">LEARNING CANDIDATE</span><h1>${esc(c['候補名'])}</h1><p class="list-meta">この候補をどう扱いますか？</p></div>
       ${candidateRead('確認回数',`${c['確認回数']}回`)}${candidateRead('基準位置',`${c['基準緯度']}, ${c['基準経度']}`)}${candidateRead('GPS精度',`${c['GPS精度_m']}m`)}${candidateRead('最寄地点',c['最寄place_id'] || '—')}${candidateRead('最寄地点距離',c['最寄地点距離_m'] == null ? '—' : `${c['最寄地点距離_m']}m`)}${candidateRead('候補状態',c['候補状態'])}${candidateRead('candidate_id',c.candidate_id)}
-      <div class="candidate-actions"><h3>新しい地点として登録</h3>${field('地点名','candidate-place-name',c['候補名'])}${field('最初の乗降位置名','candidate-point-name','','text',null,'例：正面入口、乗車場所')}
+      <div class="candidate-actions"><h3>① 新しい地点として登録</h3>${field('地点名','candidate-place-name',c['候補名'])}${field('最初の乗降位置名','candidate-point-name','','text',null,'例：正面入口、乗車場所')}
       <div class="field row">${field('認識範囲（m）','candidate-radius',initialSuggestion.radius,'number','1')}${field('GPS許容誤差（m）','candidate-accuracy',initialSuggestion.accuracy,'number','1')}</div>
       <div id="candidate-suggestion" class="warning ${initialSuggestion.density === 'critical' ? 'critical' : ''}">周辺の乗降位置からの推奨：認識範囲 ${initialSuggestion.radius}m / GPS許容誤差 ${initialSuggestion.accuracy}m</div>
       <button id="promoteCandidate" class="primary">新しい地点として登録</button>
-      <h3>既存地点へ登録</h3><div class="field"><label>登録先の地点</label><select id="candidate-target"><option value="">選択してください</option>${options}</select></div>
+      <h3>既存地点へ整理</h3><div class="field"><label>まとめ先の地点</label><select id="candidate-target"><option value="">選択してください</option>${options}</select></div>
       <label class="check"><input id="candidate-alias" type="checkbox" checked>候補名を別名へ追加</label>
-      <div class="button-row"><button id="mergeCandidate">既存地点へ統合</button><button id="addPointCandidate">乗降位置として追加</button><button id="rejectCandidate" class="danger">不採用</button></div></div>`;
+      <div class="candidate-choice"><strong>② 既存地点にまとめる</strong><small>同じ場所・同じ乗降位置として扱います。</small><button id="mergeCandidate">既存地点にまとめる</button></div>
+      <div class="candidate-choice"><strong>③ 既存地点の乗降位置として追加</strong><small>同じ地点ですが、別の乗降位置として追加します。</small><button id="addPointCandidate">乗降位置として追加</button></div>
+      <div class="candidate-choice"><strong>④ 不採用</strong><small>地点マスタには登録しません。</small><button id="rejectCandidate" class="danger">不採用</button></div></div>`;
     $('promoteCandidate').addEventListener('click', e => { e.preventDefault(); resolveCandidateAction('promote'); });
     $('mergeCandidate').addEventListener('click', e => { e.preventDefault(); resolveCandidateAction('merge'); });
     $('addPointCandidate').addEventListener('click', e => { e.preventDefault(); resolveCandidateAction('add_point'); });
@@ -556,7 +687,7 @@
     state.original = null;
     resetTransient();
   }
-  function resetTransient() { state.placement = null; state.addFlowPointId = null; state.dragPointId = null; state.moveSession = null; }
+  function resetTransient() { state.placement = null; state.addFlowPointId = null; state.dragPointId = null; state.moveSession = null; state.mergeFlow = null; }
 
   function distance(a,b) {
     const r=6371008.8,d=Math.PI/180,p1=a['中心緯度']*d,p2=b['中心緯度']*d,dp=(b['中心緯度']-a['中心緯度'])*d,dl=(b['中心経度']-a['中心経度'])*d;
@@ -593,6 +724,7 @@
     if (state.placement === 'new-place') $('mapHint').textContent = '地図をクリックして最初の乗降位置を指定';
     else if (state.placement === 'add-point') $('mapHint').textContent = '地図をクリックして新しい乗降位置を指定';
     else if (state.moveSession) $('mapHint').textContent = '青いマーカーをドラッグして位置を調整';
+    else if (state.mergeFlow) $('mapHint').textContent = '地図上の別地点をクリックして、残す地点を選択';
     else if (state.draftPlace) $('mapHint').textContent = 'すべての乗降位置と認識範囲を表示中';
     else if (state.selectedCandidateId) $('mapHint').textContent = '候補と周辺地点の位置関係を確認';
     else $('mapHint').textContent = '地点または候補を選択してください';
