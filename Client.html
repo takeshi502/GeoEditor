@@ -571,11 +571,13 @@
   function createCandidateDraft(candidate) {
     const location = { place_id:null, '中心緯度':Number(candidate['基準緯度']), '中心経度':Number(candidate['基準経度']) };
     const suggestion = suggest(location);
+    const inferredBaseArea = state.baseAreas.find(base => base.base_area_id === candidate['推定base_area_id'] && base['有効'] !== false);
     return {
       candidateId:candidate.candidate_id,
       originalLatitude:location['中心緯度'], originalLongitude:location['中心経度'],
       latitude:location['中心緯度'], longitude:location['中心経度'], editing:false, moveSession:null,
-      form:{ placeName:String(candidate['候補名'] || ''), pointName:'', radius:suggestion.radius, accuracy:suggestion.accuracy, targetPlaceId:'', addAlias:true }
+      promotionConfirm:false,
+      form:{ placeName:String(candidate['候補名'] || ''), pointName:'', baseAreaId:inferredBaseArea ? inferredBaseArea.base_area_id : '', radius:suggestion.radius, accuracy:suggestion.accuracy, targetPlaceId:'', addAlias:true }
     };
   }
 
@@ -601,6 +603,7 @@
     if (!draft) return;
     draft.moveSession = { latitude:draft.latitude, longitude:draft.longitude, radius:draft.form.radius, accuracy:draft.form.accuracy };
     draft.editing = true;
+    draft.promotionConfirm = false;
     renderAll();
     updateSaveState();
     toast('オレンジの候補マーカーを、登録したい位置へドラッグしてください。');
@@ -666,17 +669,18 @@
       { '中心緯度':draft.latitude, '中心経度':draft.longitude }
     );
     const overlaps = overlapItems(location);
+    const activeBaseAreas = state.baseAreas.filter(base => base['有効'] !== false);
+    const baseOptions = ['<option value="">基地なし</option>'].concat(activeBaseAreas.map(base => `<option value="${esc(base.base_area_id)}" ${base.base_area_id === draft.form.baseAreaId ? 'selected' : ''}>${esc(base['基地名'])}</option>`)).join('');
+    const selectedBaseArea = activeBaseAreas.find(base => base.base_area_id === draft.form.baseAreaId);
     const options = state.places.filter(p => p['有効'] !== false).map(p => {
       const placePoints = state.points.filter(point => point.place_id === p.place_id && point['有効'] !== false);
       const nearest = placePoints.length ? Math.min(...placePoints.map(point => distance(location,point))) : Infinity;
       return { place:p, distance:nearest };
     }).sort((a,b) => a.distance-b.distance || String(a.place['地点名']).localeCompare(String(b.place['地点名']),'ja'))
       .map(item => `<option value="${esc(item.place.place_id)}" ${item.place.place_id === draft.form.targetPlaceId ? 'selected' : ''}>${esc(item.place['地点名'])}${Number.isFinite(item.distance) ? `（${Math.round(item.distance)}m）` : ''}</option>`).join('');
-    $('candidateEditor').hidden = false;
-    $('candidateEditor').innerHTML = `<div class="editor-header"><span class="eyebrow">LEARNING CANDIDATE</span><h1>${esc(c['候補名'])}</h1><p class="list-meta">この候補をどう扱いますか？</p></div>
-      ${candidateRead('確認回数',`${c['確認回数']}回`)}${candidateRead('候補位置（元データ）',`${c['基準緯度']}, ${c['基準経度']}`)}${candidateRead('GPS精度',`${c['GPS精度_m']}m`)}${candidateRead('最寄地点',c['最寄place_id'] || '—')}${candidateRead('最寄地点距離',c['最寄地点距離_m'] == null ? '—' : `${c['最寄地点距離_m']}m`)}${candidateRead('候補状態',c['候補状態'])}${candidateRead('candidate_id',c.candidate_id)}
-      <div class="section-card candidate-position-card"><div class="candidate-position-heading"><strong>登録予定位置</strong><span>${candidatePositionChanged() ? '調整済み' : '候補位置を使用'}</span></div><div class="readonly">${esc(draft.latitude.toFixed(7))}, ${esc(draft.longitude.toFixed(7))}</div>${candidatePositionChanged() ? `<div class="field-help">元の候補位置から約 ${Math.round(movedMeters)}m 移動</div>` : '<div class="field-help">08_地点学習候補の元座標は変更しません。</div>'}<div class="button-row">${draft.editing ? '<button id="confirmCandidatePosition" type="button" class="primary">この位置を使う</button><button id="restoreCandidateOriginal" type="button">元の位置に戻す</button><button id="cancelCandidateMove" type="button">キャンセル</button>' : `<button id="moveCandidatePosition" type="button">地図上で位置を移動</button>${candidatePositionChanged() ? '<button id="restoreCandidateOriginal" type="button">元の位置に戻す</button>' : ''}`}</div></div>
-      <div class="candidate-actions"><h3>① 新しい地点として登録</h3>${field('地点名','candidate-place-name',draft.form.placeName)}${field('最初の乗降位置名','candidate-point-name',draft.form.pointName,'text',null,'例：正面入口、乗車場所')}
+    const newRegistration = draft.promotionConfirm
+      ? `<div class="candidate-actions"><h3>新しい地点として登録</h3><div class="summary-card promotion-confirm"><strong>登録内容を確認</strong><div class="confirm-grid"><span>地点名</span><b>${esc(draft.form.placeName || '—')}</b><span>所属基地</span><b>${esc(selectedBaseArea ? selectedBaseArea['基地名'] : '基地なし')}</b><span>登録予定位置</span><b>${candidatePositionChanged() ? `調整済み（元位置から約 ${Math.round(movedMeters)}m）` : '候補位置を使用'}</b><span>乗降位置名</span><b>${esc(draft.form.pointName || '—')}</b><span>認識範囲</span><b>${esc(draft.form.radius)}m</b></div><div class="button-row"><button id="cancelPromoteCandidate" type="button">キャンセル</button><button id="confirmPromoteCandidate" type="button" class="primary">この内容で登録</button></div></div></div>`
+      : `<div class="candidate-actions"><h3>① 新しい地点として登録</h3>${field('地点名','candidate-place-name',draft.form.placeName)}<div class="field"><label for="candidate-base">所属基地</label><select id="candidate-base">${baseOptions}</select><div class="field-help">候補の推定基地を初期表示します。必要に応じて変更してください。</div></div>${field('最初の乗降位置名','candidate-point-name',draft.form.pointName,'text',null,'例：正面入口、乗車場所')}
       <div class="field row">${field('認識範囲（m）','candidate-radius',draft.form.radius,'number','1')}${field('GPS許容誤差（m）','candidate-accuracy',draft.form.accuracy,'number','1')}</div>
       <div id="candidate-suggestion" class="warning ${suggestion.density === 'critical' ? 'critical' : ''}">現在の登録予定位置での推奨：認識範囲 ${suggestion.radius}m / GPS許容誤差 ${suggestion.accuracy}m${overlaps.length ? `<br>異なる地点との重なり ${overlaps.length}件` : ''}</div>
       <button id="promoteCandidate" class="primary">新しい地点として登録</button>
@@ -685,24 +689,42 @@
       <div class="candidate-choice"><strong>② 既存地点にまとめる</strong><small>同じ場所・同じ乗降位置として扱います。</small><button id="mergeCandidate">既存地点にまとめる</button></div>
       <div class="candidate-choice"><strong>③ 既存地点の乗降位置として追加</strong><small>同じ地点ですが、別の乗降位置として追加します。</small><button id="addPointCandidate">乗降位置として追加</button></div>
       <div class="candidate-choice"><strong>④ 不採用</strong><small>地点マスタには登録しません。</small><button id="rejectCandidate" class="danger">不採用</button></div></div>`;
+    $('candidateEditor').hidden = false;
+    $('candidateEditor').innerHTML = `<div class="editor-header"><span class="eyebrow">LEARNING CANDIDATE</span><h1>${esc(c['候補名'])}</h1><p class="list-meta">この候補をどう扱いますか？</p></div>
+      ${candidateRead('確認回数',`${c['確認回数']}回`)}${candidateRead('候補位置（元データ）',`${c['基準緯度']}, ${c['基準経度']}`)}${candidateRead('GPS精度',`${c['GPS精度_m']}m`)}${candidateRead('最寄地点',c['最寄place_id'] || '—')}${candidateRead('最寄地点距離',c['最寄地点距離_m'] == null ? '—' : `${c['最寄地点距離_m']}m`)}${candidateRead('候補状態',c['候補状態'])}${candidateRead('candidate_id',c.candidate_id)}
+      <div class="section-card candidate-position-card"><div class="candidate-position-heading"><strong>登録予定位置</strong><span>${candidatePositionChanged() ? '調整済み' : '候補位置を使用'}</span></div><div class="readonly">${esc(draft.latitude.toFixed(7))}, ${esc(draft.longitude.toFixed(7))}</div>${candidatePositionChanged() ? `<div class="field-help">元の候補位置から約 ${Math.round(movedMeters)}m 移動</div>` : '<div class="field-help">08_地点学習候補の元座標は変更しません。</div>'}<div class="button-row">${draft.editing ? '<button id="confirmCandidatePosition" type="button" class="primary">この位置を使う</button><button id="restoreCandidateOriginal" type="button">元の位置に戻す</button><button id="cancelCandidateMove" type="button">キャンセル</button>' : `<button id="moveCandidatePosition" type="button">地図上で位置を移動</button>${candidatePositionChanged() ? '<button id="restoreCandidateOriginal" type="button">元の位置に戻す</button>' : ''}`}</div></div>
+      ${newRegistration}`;
     if ($('moveCandidatePosition')) $('moveCandidatePosition').addEventListener('click', startCandidateMove);
     if ($('confirmCandidatePosition')) $('confirmCandidatePosition').addEventListener('click', confirmCandidatePosition);
     if ($('restoreCandidateOriginal')) $('restoreCandidateOriginal').addEventListener('click', restoreCandidateOriginal);
     if ($('cancelCandidateMove')) $('cancelCandidateMove').addEventListener('click', cancelCandidateMove);
-    $('promoteCandidate').addEventListener('click', e => { e.preventDefault(); resolveCandidateAction('promote'); });
-    $('mergeCandidate').addEventListener('click', e => { e.preventDefault(); resolveCandidateAction('merge'); });
-    $('addPointCandidate').addEventListener('click', e => { e.preventDefault(); resolveCandidateAction('add_point'); });
-    $('rejectCandidate').addEventListener('click', e => { e.preventDefault(); if (confirm('この候補を不採用にしますか？')) resolveCandidateAction('reject'); });
-    $('candidate-place-name').addEventListener('input', e => { draft.form.placeName = e.target.value; });
-    $('candidate-point-name').addEventListener('input', e => { draft.form.pointName = e.target.value; });
-    $('candidate-radius').addEventListener('input', e => { draft.form.radius = Number(e.target.value); });
-    $('candidate-accuracy').addEventListener('input', e => { draft.form.accuracy = Number(e.target.value); });
-    $('candidate-alias').addEventListener('change', e => { draft.form.addAlias = e.target.checked; });
-    $('candidate-target').addEventListener('change', e => {
-      draft.form.targetPlaceId = e.target.value;
-      recalculateCandidateRecommendation();
-      renderCandidateEditor();
-    });
+    if (draft.promotionConfirm) {
+      $('cancelPromoteCandidate').addEventListener('click', () => { draft.promotionConfirm = false; renderCandidateEditor(); });
+      $('confirmPromoteCandidate').addEventListener('click', () => resolveCandidateAction('promote'));
+    } else {
+      $('promoteCandidate').addEventListener('click', e => {
+        e.preventDefault();
+        if (draft.editing) return toast('「この位置を使う」で登録予定位置を確定してください。');
+        if (!draft.form.placeName.trim()) return toast('地点名を入力してください。');
+        if (!draft.form.pointName.trim()) return toast('乗降位置名を入力してください。');
+        draft.promotionConfirm = true;
+        renderCandidateEditor();
+      });
+      $('mergeCandidate').addEventListener('click', e => { e.preventDefault(); resolveCandidateAction('merge'); });
+      $('addPointCandidate').addEventListener('click', e => { e.preventDefault(); resolveCandidateAction('add_point'); });
+      $('rejectCandidate').addEventListener('click', e => { e.preventDefault(); if (confirm('この候補を不採用にしますか？')) resolveCandidateAction('reject'); });
+      $('candidate-place-name').addEventListener('input', e => { draft.form.placeName = e.target.value; });
+      $('candidate-base').addEventListener('change', e => { draft.form.baseAreaId = e.target.value; });
+      $('candidate-point-name').addEventListener('input', e => { draft.form.pointName = e.target.value; });
+      $('candidate-radius').addEventListener('input', e => { draft.form.radius = Number(e.target.value); });
+      $('candidate-accuracy').addEventListener('input', e => { draft.form.accuracy = Number(e.target.value); });
+      $('candidate-alias').addEventListener('change', e => { draft.form.addAlias = e.target.checked; });
+      $('candidate-target').addEventListener('change', e => {
+        draft.form.targetPlaceId = e.target.value;
+        recalculateCandidateRecommendation();
+        renderCandidateEditor();
+      });
+    }
   }
 
   async function resolveCandidateAction(action) {
@@ -717,7 +739,10 @@
     const point = { 'ポイント名':pointName, '表示順':1, '中心緯度':draft.latitude, '中心経度':draft.longitude, '判定半径_m':Number(draft.form.radius), '最大GPS精度_m':Number(draft.form.accuracy), '優先度':100, '有効':true, '備考':'' };
     const payload = { action, candidate_id:c.candidate_id, revision:c.revision, point };
     if (action === 'promote' || action === 'add_point') payload.registration_position = { latitude:draft.latitude, longitude:draft.longitude };
-    if (action === 'promote') payload.bundle = { place:{ '地点名':draft.form.placeName.trim(), base_area_id:c['推定base_area_id'] || '', '優先度':0, '別名':'', '有効':true, '備考':'', '登録元':'learning_candidate' }, points:[point] };
+    if (action === 'promote') {
+      payload.registration_base_area_id = draft.form.baseAreaId;
+      payload.bundle = { place:{ '地点名':draft.form.placeName.trim(), base_area_id:draft.form.baseAreaId, '優先度':0, '別名':'', '有効':true, '備考':'', '登録元':'learning_candidate' }, points:[point] };
+    }
     if (action === 'merge' || action === 'add_point') {
       if (!target) return toast('登録先の地点を選択してください。');
       payload.place_id = target.place_id;

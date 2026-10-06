@@ -9,9 +9,11 @@ function resolveCandidate_(payload) {
     var candidatesTable = readTable_(ss, 'candidates');
     var placesTable = readTable_(ss, 'places');
     var pointsTable = readTable_(ss, 'points');
+    var baseAreasTable = readTable_(ss, 'baseAreas');
     assertUniqueIds_(candidatesTable.rows, 'candidate_id');
     assertUniqueIds_(placesTable.rows, 'place_id');
     assertUniqueIds_(pointsTable.rows, 'point_id');
+    assertUniqueIds_(baseAreasTable.rows, 'base_area_id');
     var candidate = findById_(candidatesTable.rows, 'candidate_id', requiredString_(payload.candidate_id, 'candidate_id'));
     if (!candidate) throw geoError_('NOT_FOUND', '学習候補が見つかりません。');
     assertRevision_(payload.revision, candidate.revision, '学習候補', candidate.revision);
@@ -25,6 +27,7 @@ function resolveCandidate_(payload) {
       var bundle = payload.bundle || {};
       bundle.place = bundle.place || {};
       if (!bundle.place['地点名']) bundle.place['地点名'] = candidate['候補名'];
+      bundle.place.base_area_id = candidatePromotionBaseArea_(payload, bundle.place, candidate, baseAreasTable.rows);
       bundle.points = bundle.points && bundle.points.length ? bundle.points : [candidatePoint_(candidate, payload.point || {})];
       applyCandidateRegistrationPosition_(bundle.points[0], promotePosition);
       var placeStart = placesTable.sheet.getLastRow() + 1;
@@ -81,6 +84,22 @@ function resolveCandidate_(payload) {
     }
     return result;
   });
+}
+
+function candidatePromotionBaseArea_(payload, place, candidate, baseAreas) {
+  var hasExplicitSelection = Object.prototype.hasOwnProperty.call(payload || {}, 'registration_base_area_id');
+  var selected = hasExplicitSelection
+    ? payload.registration_base_area_id
+    : (place && place.base_area_id ? place.base_area_id : candidate['推定base_area_id']);
+  if (selected == null || selected === '') return '';
+  if (typeof selected !== 'string') throw geoError_('VALIDATION_ERROR', '所属基地の指定が不正です。');
+  selected = selected.trim();
+  if (!selected) return '';
+  var baseArea = findById_(baseAreas || [], 'base_area_id', selected);
+  if (!baseArea || baseArea['有効'] === false) {
+    throw geoError_('VALIDATION_ERROR', '選択された所属基地は有効な基地マスタに存在しません。');
+  }
+  return selected;
 }
 
 function candidateRegistrationPosition_(payload) {

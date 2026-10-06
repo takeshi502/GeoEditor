@@ -26,6 +26,9 @@ function point(overrides = {}) {
 function place(overrides = {}) {
   return Object.assign({ place_id:'a', '地点名':'A', base_area_id:'', '優先度':0, '別名':'', '登録元':'test', '最終使用日時':'', '有効':true, '備考':'', '作成日時':'x', '更新日時':'x', revision:1 }, overrides);
 }
+function baseArea(overrides = {}) {
+  return Object.assign({ base_area_id:'base-1','基地名':'フォスター','判定方式':'circle','中心緯度':26,'中心経度':127,'判定半径_m':1000,'境界データID':'','優先度':0,'別名':'','登録元':'test','有効':true,'備考':'','作成日時':'x','更新日時':'x',revision:1 }, overrides);
+}
 function fakeSheet(headers, rows) {
   const sheet = {
     headers, rows: rows.map(r => Object.assign({}, r)), writes:[], appended:[],
@@ -243,9 +246,9 @@ test('新規地点と初期pointを同時に生成する', () => {
   assert.equal(result.data.place.revision,1);
 });
 
-function candidateHarness(status='pending') {
-  const candidate={ candidate_id:'c1','候補名':'候補','推定所属種別':'unknown','推定base_area_id':'','推定town_id':'','基準緯度':26,'基準経度':127,'GPS精度_m':10,'確認回数':2,'初回確認日時':'','最終確認日時':'','初回source_type':'','初回source_id':'','最近source_type':'','最近source_id':'','最寄place_id':'','最寄地点距離_m':'','候補状態':status,'登録先place_id':'',revision:1 };
-  const tables={ candidates:table('candidates',[candidate]), places:table('places',[place()]), points:table('points',[point()]), baseAreas:table('baseAreas',[]) };
+function candidateHarness(status='pending', candidateOverrides={}, baseAreas=[]) {
+  const candidate=Object.assign({ candidate_id:'c1','候補名':'候補','推定所属種別':'unknown','推定base_area_id':'','推定town_id':'','基準緯度':26,'基準経度':127,'GPS精度_m':10,'確認回数':2,'初回確認日時':'','最終確認日時':'','初回source_type':'','初回source_id':'','最近source_type':'','最近source_id':'','最寄place_id':'','最寄地点距離_m':'','候補状態':status,'登録先place_id':'',revision:1 },candidateOverrides);
+  const tables={ candidates:table('candidates',[candidate]), places:table('places',[place()]), points:table('points',[point()]), baseAreas:table('baseAreas',baseAreas) };
   context.withWriteLock_=fn=>fn(); context.spreadsheet_=()=>({}); context.readTable_=(_ss,key)=>tables[key];
   return tables;
 }
@@ -322,6 +325,66 @@ test('candidate登録予定位置はサーバーで緯度経度範囲を検証�
   assert.equal(t.candidates.sheet.rows[0]['候補状態'],'pending');
   assert.throws(() => context.candidateRegistrationPosition_({registration_position:{latitude:null,longitude:127}}), error => error.code === 'VALIDATION_ERROR');
   assert.throws(() => context.candidateRegistrationPosition_({registration_position:{latitude:26,longitude:'NaN'}}), error => error.code === 'VALIDATION_ERROR');
+});
+
+test('candidate promoteは推定基地を後方互換の初期値として06へ保存する', () => {
+  const t=candidateHarness('pending',{'推定base_area_id':'base-1'},[baseArea()]);
+  const incomingPlace=place({place_id:undefined,revision:undefined,'地点名':'候補'});
+  delete incomingPlace.base_area_id;
+  const res=context.resolveCandidate_({action:'promote',candidate_id:'c1',revision:1,bundle:{place:incomingPlace,points:[point({point_id:undefined,place_id:undefined,revision:undefined})]}});
+  assert.equal(res.data.place.base_area_id,'base-1');
+  assert.equal(t.candidates.sheet.rows[0]['推定base_area_id'],'base-1');
+});
+
+test('candidate promoteは推定基地より明示選択を優先し08推定値を変えない', () => {
+  const t=candidateHarness('pending',{'推定base_area_id':'base-1'},[baseArea(),baseArea({base_area_id:'base-2','基地名':'カデナ'})]);
+  const res=context.resolveCandidate_({
+    action:'promote',candidate_id:'c1',revision:1,registration_base_area_id:'base-2',
+    bundle:{place:place({place_id:undefined,revision:undefined,'地点名':'候補',base_area_id:'base-2'}),points:[point({point_id:undefined,place_id:undefined,revision:undefined})]}
+  });
+  assert.equal(res.data.place.base_area_id,'base-2');
+  assert.equal(t.candidates.sheet.rows[0]['推定base_area_id'],'base-1');
+});
+
+test('candidate promoteは基地なしを空欄として保存する', () => {
+  const t=candidateHarness('pending',{'推定base_area_id':'base-1'},[baseArea()]);
+  const res=context.resolveCandidate_({
+    action:'promote',candidate_id:'c1',revision:1,registration_base_area_id:'',
+    bundle:{place:place({place_id:undefined,revision:undefined,'地点名':'候補',base_area_id:''}),points:[point({point_id:undefined,place_id:undefined,revision:undefined})]}
+  });
+  assert.equal(res.data.place.base_area_id,'');
+  assert.equal(t.candidates.sheet.rows[0]['推定base_area_id'],'base-1');
+});
+
+test('candidate promoteは位置調整と所属基地選択を同時に反映する', () => {
+  const t=candidateHarness('pending',{'推定base_area_id':'base-1'},[baseArea(),baseArea({base_area_id:'base-2','基地名':'カデナ'})]);
+  const res=context.resolveCandidate_({
+    action:'promote',candidate_id:'c1',revision:1,registration_base_area_id:'base-2',registration_position:{latitude:26.4,longitude:127.8},
+    bundle:{place:place({place_id:undefined,revision:undefined,'地点名':'候補',base_area_id:'base-2'}),points:[point({point_id:undefined,place_id:undefined,revision:undefined})]}
+  });
+  assert.equal(res.data.place.base_area_id,'base-2');
+  assert.equal(res.data.points[0]['中心緯度'],26.4);
+  assert.equal(res.data.points[0]['中心経度'],127.8);
+  assert.equal(t.candidates.sheet.rows[0]['基準緯度'],26);
+  assert.equal(t.candidates.sheet.rows[0]['推定base_area_id'],'base-1');
+});
+
+test('candidate promoteは不正または無効な所属基地を拒否する', () => {
+  let t=candidateHarness('pending',{},[baseArea()]);
+  const payload={action:'promote',candidate_id:'c1',revision:1,registration_base_area_id:'missing',bundle:{place:place({place_id:undefined,revision:undefined}),points:[point({point_id:undefined,place_id:undefined,revision:undefined})]}};
+  assert.throws(() => context.resolveCandidate_(payload), error => error.code === 'VALIDATION_ERROR');
+  assert.equal(t.candidates.sheet.rows[0]['候補状態'],'pending');
+  t=candidateHarness('pending',{},[baseArea({base_area_id:'inactive','有効':false})]);
+  assert.throws(() => context.resolveCandidate_(Object.assign({},payload,{registration_base_area_id:'inactive'})), error => error.code === 'VALIDATION_ERROR');
+});
+
+test('candidate add_pointは既存地点の所属基地を変更しない', () => {
+  const t=candidateHarness();
+  t.places.sheet.rows[0].base_area_id='base-1';
+  t.places.rows[0].base_area_id='base-1';
+  const res=context.resolveCandidate_({action:'add_point',candidate_id:'c1',revision:1,place_id:'a',place_revision:1,point:point({'ポイント名':'追加位置'})});
+  assert.equal(res.data.place.base_area_id,'base-1');
+  assert.equal(t.places.sheet.rows[0].base_area_id,'base-1');
 });
 
 function mergeHarness() {
@@ -451,6 +514,31 @@ test('候補位置調整はpromoteとadd_pointだけregistration_positionへ渡�
   assert.match(client,/function hasUnsavedChanges\(\) \{ return state\.dirty \|\| candidatePositionChanged\(\); \}/);
   assert.match(client,/候補の登録予定位置が変更されています。変更を破棄して移動しますか？/);
   assert.match(client,/window\.addEventListener\('beforeunload',[\s\S]*?hasUnsavedChanges\(\)/);
+});
+
+test('候補promote前に有効基地または基地なしを選択して確認できる', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
+  assert.match(client,/state\.baseAreas\.find\(base => base\.base_area_id === candidate\['推定base_area_id'\] && base\['有効'\] !== false\)/);
+  assert.match(client,/baseAreaId:inferredBaseArea \? inferredBaseArea\.base_area_id : ''/);
+  assert.match(client,/state\.baseAreas\.filter\(base => base\['有効'\] !== false\)/);
+  assert.match(client,/<option value="">基地なし<\/option>/);
+  assert.match(client,/id="candidate-base"/);
+  assert.match(client,/登録内容を確認/);
+  assert.match(client,/id="cancelPromoteCandidate"/);
+  assert.match(client,/id="confirmPromoteCandidate"/);
+  assert.match(client,/この内容で登録/);
+  assert.match(styles,/\.confirm-grid/);
+});
+
+test('候補promote payloadは選択基地を明示し位置移動では基地選択を変えない', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const startMove=client.match(/function startCandidateMove\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(startMove);
+  assert.doesNotMatch(startMove[1],/baseAreaId/);
+  assert.match(client,/payload\.registration_base_area_id = draft\.form\.baseAreaId/);
+  assert.match(client,/base_area_id:draft\.form\.baseAreaId/);
+  assert.match(client,/draft\.form\.baseAreaId = e\.target\.value/);
 });
 
 test('候補マーカー選択は未保存変更保護を通り、正式point選択を維持する', () => {
