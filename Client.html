@@ -9,7 +9,7 @@
     dirty: false, placement: null, addFlowPointId: null, dragPointId: null,
     moveSession: null, mergeFlow: null, query: '',
     placeOrderCache: { signature:null, records:[] },
-    listView: { scrollTop:0, lastPlaceId:null, lastCandidateId:null, restorePending:false }
+    listView: { scrollTop:0, lastPlaceId:null, lastCandidateId:null }
   };
   const $ = id => document.getElementById(id);
   const esc = value => String(value == null ? '' : value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -83,6 +83,7 @@
     $('candidateCount').textContent = `${candidates.length}件`;
     $('candidateList').innerHTML = candidates.map(c => `<button class="list-item ${c.candidate_id === state.selectedCandidateId ? 'active' : ''} ${!state.selectedCandidateId && c.candidate_id === state.listView.lastCandidateId ? 'recent' : ''}" data-candidate="${esc(c.candidate_id)}"><span class="list-title">${esc(c['候補名'])}</span><span class="list-meta">確認 ${esc(c['確認回数'])}回 · ${esc(c['候補状態'])}</span></button>`).join('') || '<div class="list-meta">未処理候補なし</div>';
     $('candidateList').querySelectorAll('[data-candidate]').forEach(el => el.addEventListener('click', () => selectCandidate(el.dataset.candidate)));
+    requestAnimationFrame(() => { document.querySelector('.left-panel').scrollTop = state.listView.scrollTop; });
   }
 
   function orderedPlaceRecords() {
@@ -95,29 +96,13 @@
 
   function rememberListView(placeId, candidateId) {
     const panel = document.querySelector('.left-panel');
-    if (panel && !$('workspace').classList.contains('focus-mode')) state.listView.scrollTop = panel.scrollTop;
+    if (panel) state.listView.scrollTop = panel.scrollTop;
     if (placeId) state.listView.lastPlaceId = placeId;
     if (candidateId) state.listView.lastCandidateId = candidateId;
   }
 
-  function restoreListView() {
-    if (!state.listView.restorePending) return;
-    requestAnimationFrame(() => {
-      const panel = document.querySelector('.left-panel');
-      if (panel) panel.scrollTop = state.listView.scrollTop;
-      state.listView.restorePending = false;
-    });
-  }
-
   function renderWorkspace() {
-    const focused = !!(state.draftPlace || state.selectedCandidateId || state.placement === 'new-place') && !state.mergeFlow;
-    $('workspace').classList.toggle('focus-mode', focused);
-    $('backToListBtn').hidden = !focused;
-    const placeMode = !!state.draftPlace;
-    document.querySelector('.studio-grid').classList.toggle('place-mode', placeMode);
-    $('pointPanel').hidden = !placeMode;
-    $('addPointBtn').disabled = !placeMode || !!state.placement || !!state.mergeFlow;
-    if (placeMode) {
+    if (state.draftPlace) {
       const count = state.draftPoints.filter(p => p['有効'] !== false).length;
       $('contextTitle').textContent = String(state.draftPlace['地点名'] || '新しい地点');
       $('contextSummary').textContent = `編集中の地点 · ${count}つの乗降位置と認識範囲で、この地点をカバーしています`;
@@ -137,12 +122,20 @@
   }
 
   function renderPointList() {
-    if (!state.draftPlace) { $('pointList').innerHTML = ''; return; }
-    $('placeOverviewBtn').classList.toggle('active', !state.selectedPointId);
-    $('pointList').innerHTML = state.draftPoints.map(point => {
+    const navigator = $('pointNavigator');
+    if (!state.draftPlace || state.mergeFlow) { navigator.hidden = true; navigator.innerHTML = ''; return; }
+    navigator.hidden = false;
+    const activePoints = state.draftPoints.filter(point => point['有効'] !== false).length;
+    navigator.innerHTML = `<div class="target-heading"><div><span class="eyebrow">登録地点</span><strong>${esc(state.draftPlace['地点名'] || '新しい地点')}</strong><small>乗降位置 ${activePoints}か所</small></div><button id="addPointBtn" type="button" class="compact primary" ${state.placement || state.mergeFlow ? 'disabled' : ''}>＋ 乗降位置</button></div>
+      <div class="target-label">編集対象</div>
+      <button id="placeOverviewBtn" class="target-card overview ${!state.selectedPointId ? 'active' : ''}" type="button"><span class="overview-icon">◎</span><span><strong>地点全体</strong><small>地点名・別名・設定</small></span></button>
+      <div id="pointList" class="target-point-list">${state.draftPoints.map(point => {
       const id = point.point_id || point._temp_id;
-      return `<button type="button" class="spot-card ${id === state.selectedPointId ? 'active' : ''} ${point['有効'] === false ? 'inactive' : ''}" data-edit-point="${esc(id)}"><span class="badge">${esc(pointLetter(point))}</span><span><strong>${esc(point['ポイント名'] || '名称未入力')}</strong><small>認識範囲 ${esc(point['判定半径_m'])}m${point['有効'] === false ? ' · 無効' : ''}</small></span></button>`;
-    }).join('') || '<div class="list-meta">乗降位置がありません</div>';
+      return `<button type="button" class="target-card ${id === state.selectedPointId ? 'active' : ''} ${point['有効'] === false ? 'inactive' : ''}" data-edit-point="${esc(id)}"><span class="badge">${esc(pointLetter(point))}</span><span><strong>${esc(point['ポイント名'] || '名称未入力')}</strong><small>認識範囲 ${esc(point['判定半径_m'])}m${point['有効'] === false ? ' · 無効' : ''}</small></span></button>`;
+    }).join('') || '<div class="list-meta">乗降位置がありません</div>'}</div>
+      <div class="same-place-note">同じ地点の認識範囲は、重なっても問題ありません。</div>`;
+    $('placeOverviewBtn').addEventListener('click',showPlaceOverview);
+    $('addPointBtn').addEventListener('click',startAddPoint);
     $('pointList').querySelectorAll('[data-edit-point]').forEach(el => el.addEventListener('click', () => selectPoint(el.dataset.editPoint)));
   }
 
@@ -213,6 +206,10 @@
   function isPlaceActive(id) { const place = state.places.find(p => p.place_id === id); return !!place && place['有効'] !== false; }
 
   function selectPlace(placeId, pointId) {
+    if (placeId === state.selectedPlaceId && state.draftPlace) {
+      if (pointId) selectPoint(pointId);
+      return;
+    }
     if (!canLeave()) return;
     const place = state.places.find(p => p.place_id === placeId);
     if (!place) return;
@@ -243,6 +240,7 @@
   }
 
   function showPlaceOverview() {
+    if (state.moveSession && !confirm('移動中の位置を確定せずに地点全体へ切り替えますか？')) return;
     state.selectedPointId = null;
     state.dragPointId = null;
     state.moveSession = null;
@@ -307,7 +305,7 @@
     const baseOptions = ['<option value="">なし</option>'].concat(state.baseAreas.filter(b => b['有効'] !== false).map(b => `<option value="${esc(b.base_area_id)}" ${b.base_area_id === p.base_area_id ? 'selected' : ''}>${esc(b['基地名'])}</option>`)).join('');
     $('placeEditor').hidden = false;
     $('placeEditor').innerHTML = `<div class="editor-header"><span class="eyebrow">PLACE OVERVIEW</span><h1>地点全体</h1><p class="list-meta">編集中の地点：${esc(p['地点名'] || '新しい地点')}</p></div>
-      <div class="summary-card"><strong>${activeCount}つの乗降位置でカバー</strong><p>左の一覧と地図に、この地点を構成するすべての認識範囲を表示しています。円同士が重なっても問題ありません。</p></div>
+      <div class="summary-card"><strong>${activeCount}つの乗降位置でカバー</strong><p>右上の編集対象と地図に、この地点を構成するすべての認識範囲を表示しています。円同士が重なっても問題ありません。</p></div>
       ${field('地点名','place-name',p['地点名'],'text',null,'例：5703、北前ローソン')}
       ${field('別名','place-alias',p['別名'],'text',null,'検索に使う旧名称など')}
       <div class="field"><label>所属する基地</label><select id="place-base">${baseOptions}</select></div>
@@ -694,7 +692,13 @@
     state.points = state.points.filter(p => p.place_id !== bundle.place.place_id).concat(bundle.points);
   }
   function discard() {
-    if (!state.original || !state.draftPlace || !state.draftPlace.place_id) return backToList(true);
+    if (!state.original || !state.draftPlace || !state.draftPlace.place_id) {
+      clearSelection();
+      setDirty(false);
+      renderAll();
+      fitData();
+      return;
+    }
     state.draftPlace = clone(state.original.place);
     state.draftPoints = clone(state.original.points);
     state.selectedPointId = null;
@@ -712,17 +716,6 @@
     $('discardBtn').disabled = !state.dirty;
   }
 
-  function backToList(force) {
-    if (!force && !canLeave()) return;
-    if (state.selectedPlaceId) state.listView.lastPlaceId = state.selectedPlaceId;
-    if (state.selectedCandidateId) state.listView.lastCandidateId = state.selectedCandidateId;
-    clearSelection();
-    setDirty(false);
-    state.listView.restorePending = true;
-    renderAll();
-    restoreListView();
-    fitData();
-  }
   function clearSelection() {
     state.selectedPlaceId = null;
     state.selectedPointId = null;
@@ -796,10 +789,8 @@
     renderLists();
     document.querySelector('.left-panel').scrollTop=0;
   });
+  document.querySelector('.left-panel').addEventListener('scroll', e => { state.listView.scrollTop=e.currentTarget.scrollTop; });
   $('newPlaceBtn').addEventListener('click',startNewPlace);
-  $('addPointBtn').addEventListener('click',startAddPoint);
-  $('placeOverviewBtn').addEventListener('click',showPlaceOverview);
-  $('backToListBtn').addEventListener('click',() => backToList(false));
   $('saveBtn').addEventListener('click',save);
   $('discardBtn').addEventListener('click',discard);
   window.addEventListener('beforeunload', e => { if (state.dirty) { e.preventDefault(); e.returnValue=''; } });

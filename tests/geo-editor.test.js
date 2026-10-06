@@ -352,8 +352,8 @@ test('地点専用編集レイアウトと地図は確定したGrid行の内側�
   assert.match(styles,/\.leaflet-container \{[^}]*overflow:hidden;/);
   assert.match(styles,/html,body \{[^}]*height:100%;[^}]*overflow:hidden;/);
   assert.match(styles,/\.workspace \{[^}]*min-height:0;[^}]*grid-template-rows:minmax\(0,1fr\);[^}]*overflow:hidden;/);
-  assert.match(styles,/\.workspace\.focus-mode \{[^}]*grid-template-columns:0 minmax\(0,1fr\)/);
-  assert.match(styles,/\.studio-grid\.place-mode \{[^}]*grid-template-columns:250px minmax\(420px,1fr\) 350px/);
+  assert.doesNotMatch(styles,/\.workspace\.focus-mode/);
+  assert.match(styles,/\.studio-grid \{[^}]*grid-template-columns:minmax\(420px,1fr\) 390px/);
   assert.match(styles,/\.panel \{[^}]*min-height:0;[^}]*overflow:auto;/);
   assert.match(styles,/\.map-panel \{[^}]*min-height:0;[^}]*overflow:hidden;/);
   assert.match(styles,/#map \{[^}]*height:100%;[^}]*min-height:0;[^}]*overflow:hidden;/);
@@ -392,18 +392,21 @@ test('候補マーカー選択は未保存変更保護を通り、正式point選
   assert.match(client,/a\.distance-b\.distance \|\| String\(a\.place\['地点名'\]\)\.localeCompare\(String\(b\.place\['地点名'\]\),'ja'\)/);
 });
 
-test('地点一覧から地点専用編集モードへ入り、地点全体へ戻れる', () => {
+test('左地点一覧を常設し、戻る画面遷移なしで編集対象を切り替える', () => {
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
   const index=fs.readFileSync(path.join(root,'Index.html'),'utf8');
-  assert.match(index,/id="pointPanel"/);
-  assert.match(index,/id="placeOverviewBtn"/);
-  assert.match(index,/id="backToListBtn"/);
-  assert.match(client,/workspace'\)\.classList\.toggle\('focus-mode', focused\)/);
+  assert.match(index,/class="left-panel panel"/);
+  assert.match(index,/id="pointNavigator"/);
+  assert.doesNotMatch(index,/id="pointPanel"/);
+  assert.doesNotMatch(index,/id="backToListBtn"/);
+  assert.doesNotMatch(client,/focus-mode/);
+  assert.doesNotMatch(client,/function backToList/);
   assert.match(client,/function showPlaceOverview\(\)[\s\S]*?state\.selectedPointId = null/);
-  assert.match(client,/function backToList\(force\)[\s\S]*?clearSelection\(\)/);
+  assert.match(client,/id="placeOverviewBtn" class="target-card overview/);
+  assert.match(client,/id="addPointBtn"[^>]*>＋ 乗降位置/);
 });
 
-test('地点一覧は安定した空間順をキャッシュし、一覧復帰時の表示状態を復元する', () => {
+test('地点一覧は安定した空間順をキャッシュし、常設中も検索とスクロールを保持する', () => {
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
   const index=fs.readFileSync(path.join(root,'Index.html'),'utf8');
   const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
@@ -411,14 +414,11 @@ test('地点一覧は安定した空間順をキャッシュし、一覧復帰�
   assert.match(client,/placeOrderCache: \{ signature:null, records:\[\] \}/);
   assert.match(client,/GeoPlaceOrder\.signature\(state\.places, state\.points\)/);
   assert.match(client,/GeoPlaceOrder\.orderPlaces\(state\.places, state\.points, state\.baseAreas\)/);
-  assert.match(client,/listView: \{ scrollTop:0, lastPlaceId:null, lastCandidateId:null, restorePending:false \}/);
+  assert.match(client,/listView: \{ scrollTop:0, lastPlaceId:null, lastCandidateId:null \}/);
   assert.match(client,/state\.listView\.scrollTop = panel\.scrollTop/);
-  assert.match(client,/if \(panel\) panel\.scrollTop = state\.listView\.scrollTop/);
-  assert.match(client,/state\.listView\.restorePending = true;[\s\S]*?renderAll\(\);[\s\S]*?restoreListView\(\)/);
+  assert.match(client,/left-panel'\)\.scrollTop = state\.listView\.scrollTop/);
+  assert.match(client,/left-panel'\)\.addEventListener\('scroll'/);
   assert.match(client,/state\.query=e\.target\.value/);
-  const backToListBody=client.match(/function backToList\(force\) \{([\s\S]*?)\n  \}\n  function clearSelection/);
-  assert.ok(backToListBody);
-  assert.doesNotMatch(backToListBody[1],/state\.query\s*=/);
   assert.match(styles,/\.list-item\.recent/);
 });
 
@@ -429,6 +429,32 @@ test('全乗降位置を常時一覧表示し、一覧と地図は共通のpoint
   assert.match(client,/data-edit-point[^\n]+selectPoint\(el\.dataset\.editPoint\)/);
   assert.match(client,/marker\.on\('click', \(\) => inContext \? selectPoint\(id\)/);
   assert.match(client,/letter-icon\$\{isActive \? ' selected' : ''\}/);
+  assert.match(client,/navigator\.innerHTML = `<div class="target-heading">/);
+  assert.match(client,/target-card \$\{id === state\.selectedPointId \? 'active'/);
+});
+
+test('左一覧から別地点と候補へ直接切り替える際は未保存変更保護を通る', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const selectPlaceBody=client.match(/function selectPlace\(placeId, pointId\) \{([\s\S]*?)\n  \}\n\n  function selectPoint/);
+  const selectCandidateBody=client.match(/function selectCandidate\(candidateId\) \{([\s\S]*?)\n  \}\n\n  function scrollSelectedCandidateIntoView/);
+  assert.ok(selectPlaceBody);
+  assert.ok(selectCandidateBody);
+  assert.match(selectPlaceBody[1],/placeId === state\.selectedPlaceId/);
+  assert.match(selectPlaceBody[1],/if \(!canLeave\(\)\) return/);
+  assert.match(selectCandidateBody[1],/!canLeave\(\)/);
+  assert.match(client,/state\.selectedPlaceId = placeId/);
+  assert.match(client,/state\.selectedCandidateId = candidateId/);
+});
+
+test('point切替はdraftを維持し、移動操作中だけ確認して地図と同期する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const selectPointBody=client.match(/function selectPoint\(pointId\) \{([\s\S]*?)\n  \}\n\n  function showPlaceOverview/);
+  assert.ok(selectPointBody);
+  assert.match(selectPointBody[1],/state\.moveSession/);
+  assert.match(selectPointBody[1],/state\.selectedPointId = pointId/);
+  assert.doesNotMatch(selectPointBody[1],/state\.draftPoints = \[\]/);
+  assert.match(selectPointBody[1],/map\.panTo/);
+  assert.match(client,/marker\.on\('click', \(\) => inContext \? selectPoint\(id\)/);
 });
 
 test('乗降位置追加は位置指定・内容確認・保存のガイドを表示する', () => {

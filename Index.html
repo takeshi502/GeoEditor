@@ -37,21 +37,8 @@
       </header>
 
       <div class="studio-grid">
-        <aside id="pointPanel" class="point-panel panel" hidden>
-          <div class="point-panel-head">
-            <div><span class="eyebrow">BOARDING SPOTS</span><h2>乗降位置</h2></div>
-            <button id="addPointBtn" class="compact primary" disabled>＋ 追加</button>
-          </div>
-          <button id="placeOverviewBtn" class="overview-button" type="button">
-            <span class="overview-icon">◎</span><span><strong>地点全体</strong><small>すべての認識範囲を見る</small></span>
-          </button>
-          <div id="pointList" class="studio-point-list"></div>
-          <div class="same-place-note">同じ地点の認識範囲は、重なっても問題ありません。</div>
-        </aside>
-
         <section class="map-panel">
           <div class="map-toolbar">
-            <button id="backToListBtn" class="back-button" hidden>← 地点一覧へ</button>
             <span id="mapHint">地点または候補を選択してください</span>
           </div>
           <div id="placementGuide" class="placement-guide" hidden></div>
@@ -60,6 +47,7 @@
         </section>
 
         <aside class="right-panel panel">
+          <div id="pointNavigator" class="point-navigator" hidden></div>
           <div id="emptyEditor" class="empty-state">
             <div class="empty-visual">◎</div>
             <h2>1つの地点を、複数の乗降位置でカバー</h2>

@@ -38,9 +38,7 @@
   .save-state { margin-left:auto; font-size:13px; color:var(--muted); } .save-state.dirty { color:#a15c00; font-weight:700; }
   .top-actions { display:flex; gap:8px; }
 
-  .workspace { height:calc(100% - 58px); min-height:0; display:grid; grid-template-columns:310px minmax(0,1fr); grid-template-rows:minmax(0,1fr); overflow:hidden; transition:grid-template-columns .2s ease; }
-  .workspace.focus-mode { grid-template-columns:0 minmax(0,1fr); }
-  .workspace.focus-mode .left-panel { visibility:hidden; opacity:0; pointer-events:none; padding-left:0; padding-right:0; }
+  .workspace { height:calc(100% - 58px); min-height:0; display:grid; grid-template-columns:310px minmax(0,1fr); grid-template-rows:minmax(0,1fr); overflow:hidden; }
   .panel { min-height:0; background:#fff; overflow:auto; }
   .left-panel { border-right:1px solid var(--line); padding:18px 14px; transition:opacity .16s ease; }
   .list-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:18px; }
@@ -63,18 +61,8 @@
   .studio { min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); overflow:hidden; }
   .context-header { min-height:82px; background:#fff; border-bottom:1px solid var(--line); padding:13px 20px; display:flex; align-items:center; }
   .context-header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
-  .studio-grid { min-width:0; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 360px; grid-template-rows:minmax(0,1fr); overflow:hidden; }
-  .studio-grid.place-mode { grid-template-columns:250px minmax(420px,1fr) 350px; }
-  .point-panel { border-right:1px solid var(--line); padding:15px 12px; }
-  .point-panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-  .point-panel-head h2 { margin:3px 0 12px; font-size:17px; }
-  .overview-button,.spot-card { width:100%; text-align:left; display:flex; align-items:center; gap:10px; padding:10px; margin-bottom:6px; }
-  .overview-button.active,.spot-card.active { background:var(--blue-soft); border-color:#a9c8f7; }
+  .studio-grid { min-width:0; min-height:0; display:grid; grid-template-columns:minmax(420px,1fr) 390px; grid-template-rows:minmax(0,1fr); overflow:hidden; }
   .overview-icon { width:30px; height:30px; display:grid; place-items:center; border-radius:8px; background:#dfeaff; color:var(--blue); font-weight:800; flex:none; }
-  .overview-button small,.spot-card small { display:block; color:var(--muted); margin-top:2px; font-size:11px; }
-  .studio-point-list { margin-top:14px; }
-  .spot-card .badge { width:30px; height:30px; }
-  .spot-card.inactive { opacity:.58; }
   .same-place-note { margin-top:16px; background:#f1f7ff; color:#3c5d86; border-radius:8px; padding:10px; font-size:11px; line-height:1.55; }
 
   .map-panel { position:relative; min-width:0; min-height:0; overflow:hidden; }
@@ -82,7 +70,6 @@
   .map-toolbar { position:absolute; z-index:500; top:10px; left:50px; right:10px; display:flex; gap:8px; align-items:center; pointer-events:none; }
   .map-toolbar>* { pointer-events:auto; }
   #mapHint { background:#fffffff2; padding:8px 11px; border-radius:8px; box-shadow:0 1px 6px #0002; color:#475467; font-size:12px; }
-  .back-button { box-shadow:0 1px 6px #0002; }
   .placement-guide { position:absolute; z-index:550; top:58px; left:50%; transform:translateX(-50%); min-width:390px; max-width:70%; background:#172033ee; color:#fff; border-radius:11px; padding:12px 15px; box-shadow:0 5px 18px #0004; }
   .placement-guide strong { display:block; margin-bottom:7px; }
   .steps { display:flex; align-items:center; gap:6px; font-size:11px; color:#cbd5e1; }
@@ -90,7 +77,23 @@
   .step.active { background:#fff; color:#172033; font-weight:800; }
   .toast { position:absolute; z-index:600; left:50%; bottom:20px; transform:translateX(-50%); background:#172033; color:white; padding:10px 14px; border-radius:8px; max-width:80%; }
 
-  .right-panel { border-left:1px solid var(--line); padding:18px; }
+  .right-panel { border-left:1px solid var(--line); padding:0; }
+  .point-navigator { position:sticky; top:0; z-index:3; padding:15px 18px 13px; background:#fff; border-bottom:1px solid var(--line); box-shadow:0 4px 12px #1720330d; }
+  .target-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+  .target-heading strong,.target-heading small { display:block; }
+  .target-heading strong { margin-top:3px; font-size:18px; }
+  .target-heading small { margin-top:2px; color:var(--muted); font-size:11px; }
+  .target-label { margin:0 0 7px; color:var(--muted); font-size:11px; font-weight:700; }
+  .target-point-list { display:grid; gap:5px; max-height:190px; overflow:auto; }
+  .target-card { width:100%; min-width:0; display:flex; align-items:center; gap:9px; padding:8px 9px; text-align:left; }
+  .target-card span:last-child { min-width:0; }
+  .target-card strong,.target-card small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .target-card small { margin-top:2px; color:var(--muted); font-size:10px; }
+  .target-card.active { background:var(--blue-soft); border-color:#a9c8f7; }
+  .target-card.inactive { opacity:.58; }
+  .target-card .badge { width:30px; height:30px; }
+  .target-card.overview { margin-bottom:6px; }
+  .editor { padding:18px; }
   .editor-header { padding-bottom:14px; border-bottom:1px solid var(--line); margin-bottom:16px; }
   .editor-header h1 { font-size:20px; margin:4px 0; }
   .parent-label { display:flex; align-items:center; gap:7px; color:var(--blue-2); font-size:12px; font-weight:700; margin-bottom:5px; }
@@ -139,5 +142,5 @@
   .merge-point { display:flex; align-items:center; gap:9px; border-bottom:1px solid var(--line); padding:9px 2px; }
   .merge-point strong,.merge-point small { display:block; }
   .merge-point small { color:var(--muted); margin-top:2px; font-size:11px; }
-  @media (max-width:1100px) { .studio-grid.place-mode { grid-template-columns:220px minmax(360px,1fr) 330px; } .workspace { grid-template-columns:270px minmax(0,1fr); } }
+  @media (max-width:1100px) { .studio-grid { grid-template-columns:minmax(360px,1fr) 340px; } .workspace { grid-template-columns:270px minmax(0,1fr); } }
 </style>
