@@ -32,6 +32,14 @@ var GEO_SCHEMA = Object.freeze({
       '境界データID', '優先度', '別名', '登録元', '有効', '備考', '作成日時',
       '更新日時', 'revision'
     ])
+  }),
+  municipalities: Object.freeze({
+    sheet: '09_市町村境界マスタ',
+    headers: Object.freeze([
+      'municipality_id', '行政区域コード', '市町村正式名', '市町村表示名',
+      '境界データID', 'bbox_min_lat', 'bbox_min_lng', 'bbox_max_lat',
+      'bbox_max_lng', '有効', 'データ基準日', 'revision'
+    ])
   })
 });
 

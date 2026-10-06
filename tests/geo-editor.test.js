@@ -29,6 +29,9 @@ function place(overrides = {}) {
 function baseArea(overrides = {}) {
   return Object.assign({ base_area_id:'base-1','基地名':'フォスター','判定方式':'circle','中心緯度':26,'中心経度':127,'判定半径_m':1000,'境界データID':'','優先度':0,'別名':'','登録元':'test','有効':true,'備考':'','作成日時':'x','更新日時':'x',revision:1 }, overrides);
 }
+function municipality(overrides = {}) {
+  return Object.assign({ municipality_id:'municipality-1','行政区域コード':'47205','市町村正式名':'宜野湾市','市町村表示名':'宜野湾市','境界データID':'boundary-1',bbox_min_lat:26.24,bbox_min_lng:127.72,bbox_max_lat:26.31,bbox_max_lng:127.80,'有効':true,'データ基準日':'2026-01-01',revision:1 }, overrides);
+}
 function fakeSheet(headers, rows) {
   const sheet = {
     headers, rows: rows.map(r => Object.assign({}, r)), writes:[], appended:[],
@@ -65,6 +68,7 @@ test('正式schemaの列順と列数を検証する', () => {
   assert.equal(context.GEO_SCHEMA.places.headers.length, 12);
   assert.equal(context.GEO_SCHEMA.points.headers.length, 16);
   assert.equal(context.GEO_SCHEMA.candidates.headers.length, 20);
+  assert.equal(context.GEO_SCHEMA.municipalities.headers.length, 12);
   assert.doesNotThrow(() => context.validateHeaders_('x', Array.from(context.GEO_SCHEMA.places.headers), context.GEO_SCHEMA.places.headers));
   assert.throws(() => context.validateHeaders_('x', ['wrong'], context.GEO_SCHEMA.places.headers), e => e.code === 'SCHEMA_MISMATCH');
 });
@@ -107,6 +111,48 @@ test('近い地点を連続させ、複数point地点は表示順先頭の有効
   const ids=Array.from(ordered, record => record.place.place_id);
   assert.equal(ordered.filter(record => record.place.place_id === 'near-1').length,1);
   assert.equal(Math.abs(ids.indexOf('near-1')-ids.indexOf('near-2')),1);
+});
+
+test('基地外地点は代表pointの市町村bboxでグループ化し、基地グループを先に並べる', () => {
+  const places=[
+    place({place_id:'base','地点名':'基地内',base_area_id:'base-1'}),
+    place({place_id:'ginowan','地点名':'宜野湾',base_area_id:''}),
+    place({place_id:'chatan','地点名':'北谷',base_area_id:''})
+  ];
+  const points=[
+    point({point_id:'base-point',place_id:'base','中心緯度':26.30,'中心経度':127.76}),
+    point({point_id:'ginowan-point',place_id:'ginowan','中心緯度':26.27,'中心経度':127.75}),
+    point({point_id:'chatan-point',place_id:'chatan','中心緯度':26.32,'中心経度':127.76})
+  ];
+  const municipalities=[
+    municipality(),
+    municipality({municipality_id:'municipality-2','行政区域コード':'47326','市町村正式名':'北谷町','市町村表示名':'北谷町',bbox_min_lat:26.293,bbox_min_lng:127.742,bbox_max_lat:26.347,bbox_max_lng:127.786})
+  ];
+  const ordered=spatial.orderPlaces(places,points,[baseArea()],municipalities);
+  assert.deepEqual(Array.from(ordered, record => record.groupLabel),['フォスター','宜野湾市','北谷町']);
+  assert.equal(ordered[0].groupType,'base');
+});
+
+test('重複する市町村bboxでは最小範囲を選び、未判定地点も一覧に残す', () => {
+  const broad=municipality({municipality_id:'broad','市町村表示名':'広域',bbox_min_lat:26.20,bbox_min_lng:127.70,bbox_max_lat:26.40,bbox_max_lng:127.90});
+  const narrow=municipality({municipality_id:'narrow','市町村表示名':'狭域',bbox_min_lat:26.25,bbox_min_lng:127.74,bbox_max_lat:26.30,bbox_max_lng:127.79});
+  const located=point({point_id:'located',place_id:'located','中心緯度':26.27,'中心経度':127.76});
+  assert.equal(spatial.municipalityForPoint(located,[broad,narrow]).municipality_id,'narrow');
+  const ordered=spatial.orderPlaces(
+    [place({place_id:'located'}),place({place_id:'unknown'})],
+    [located,point({point_id:'unknown',place_id:'unknown','中心緯度':30,'中心経度':130})],
+    [],[broad,narrow]
+  );
+  assert.deepEqual(Array.from(ordered, record => record.groupLabel),['狭域','市町村未判定']);
+});
+
+test('基地所属地点は市町村bbox内でも基地グループだけに1件表示する', () => {
+  const places=[place({place_id:'inside-base',base_area_id:'base-1'})];
+  const points=[point({point_id:'inside-base-point',place_id:'inside-base','中心緯度':26.27,'中心経度':127.76})];
+  const ordered=spatial.orderPlaces(places,points,[baseArea()],[municipality()]);
+  assert.equal(ordered.length,1);
+  assert.equal(ordered[0].groupLabel,'フォスター');
+  assert.equal(ordered[0].groupKey,'base:base-1');
 });
 
 test('判定円重複量を計算する', () => {
@@ -571,8 +617,12 @@ test('地点一覧は安定した空間順をキャッシュし、常設中も�
   const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
   assert.match(index,/include\('SpatialOrder'\)/);
   assert.match(client,/placeOrderCache: \{ signature:null, records:\[\] \}/);
-  assert.match(client,/GeoPlaceOrder\.signature\(state\.places, state\.points\)/);
-  assert.match(client,/GeoPlaceOrder\.orderPlaces\(state\.places, state\.points, state\.baseAreas\)/);
+  assert.match(client,/GeoPlaceOrder\.signature\(state\.places, state\.points, state\.baseAreas, state\.municipalities\)/);
+  assert.match(client,/GeoPlaceOrder\.orderPlaces\(state\.places, state\.points, state\.baseAreas, state\.municipalities\)/);
+  assert.match(styles,/\.place-group-label[^}]*font-size:16px/);
+  assert.match(client,/const placeRecords = orderedPlaceRecords\(\)\.filter/);
+  assert.match(client,/const heading = record\.groupLabel && record\.groupKey !== previousGroupKey/);
+  assert.match(client,/state\.municipalities = response\.data\.municipalities/);
   assert.match(client,/listView: \{ scrollTop:0, lastPlaceId:null, lastCandidateId:null \}/);
   assert.match(client,/state\.listView\.scrollTop = panel\.scrollTop/);
   assert.match(client,/left-panel'\)\.scrollTop = state\.listView\.scrollTop/);

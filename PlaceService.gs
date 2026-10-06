@@ -4,12 +4,14 @@ function getGeoEditorBootstrap_() {
   var points = readTable_(ss, 'points');
   var candidates = readTable_(ss, 'candidates');
   var baseAreas = readTable_(ss, 'baseAreas');
+  var municipalities = readTable_(ss, 'municipalities');
   return {
     data: {
       places: places.rows.map(publicItem_),
       points: points.rows.map(publicItem_),
       candidates: candidates.rows.map(publicItem_),
       base_areas: baseAreas.rows.map(publicItem_),
+      municipalities: municipalities.rows.map(publicItem_),
       schema: schemaInfo_()
     }
   };

@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const state = {
-    places: [], points: [], candidates: [], baseAreas: [],
+    places: [], points: [], candidates: [], baseAreas: [], municipalities: [],
     selectedPlaceId: null, selectedPointId: null, selectedCandidateId: null,
     mapContextPlaceId: null, mapContextPointId: null,
     draftPlace: null, draftPoints: [], original: null, candidateDraft: null,
@@ -38,6 +38,7 @@
       state.points = response.data.points;
       state.candidates = response.data.candidates;
       state.baseAreas = response.data.base_areas;
+      state.municipalities = response.data.municipalities;
       renderAll();
       await new Promise(resolve => requestAnimationFrame(resolve));
       map.invalidateSize({ pan:false });
@@ -87,9 +88,9 @@
   }
 
   function orderedPlaceRecords() {
-    const signature = GeoPlaceOrder.signature(state.places, state.points);
+    const signature = GeoPlaceOrder.signature(state.places, state.points, state.baseAreas, state.municipalities);
     if (state.placeOrderCache.signature !== signature) {
-      state.placeOrderCache = { signature, records:GeoPlaceOrder.orderPlaces(state.places, state.points, state.baseAreas) };
+      state.placeOrderCache = { signature, records:GeoPlaceOrder.orderPlaces(state.places, state.points, state.baseAreas, state.municipalities) };
     }
     return state.placeOrderCache.records;
   }
@@ -961,7 +962,7 @@
   function showWarnings(warnings) { if (warnings && warnings.length) alert(`保存は完了しましたが警告があります。\n\n${warnings.map(w=>w.message||w.code).join('\n')}`); }
   async function reload() {
     const response=await server('getGeoEditorBootstrap');
-    state.places=response.data.places; state.points=response.data.points; state.candidates=response.data.candidates; state.baseAreas=response.data.base_areas;
+    state.places=response.data.places; state.points=response.data.points; state.candidates=response.data.candidates; state.baseAreas=response.data.base_areas; state.municipalities=response.data.municipalities;
     clearSelection(); setDirty(false); renderAll(); fitData();
   }
 
