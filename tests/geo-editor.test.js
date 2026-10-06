@@ -470,7 +470,7 @@ test('右カラム上部を固定せず全体を1つの縦スクロール領域�
   assert.match(panelRule[1],/min-height:0/);
   assert.match(panelRule[1],/overflow-y:auto/);
   assert.match(client,/function resetRightPanelScroll\(\)[\s\S]*?right-panel'\)\.scrollTop = 0/);
-  assert.match(client,/function scrollRightPanelToEditor\(\)[\s\S]*?editor\.offsetTop/);
+  assert.match(client,/function scrollRightPanelToEditor\(\)[\s\S]*?editor\.getBoundingClientRect\(\)\.top - panel\.getBoundingClientRect\(\)\.top/);
   assert.match(client,/function selectPlace\(placeId, pointId\)[\s\S]*?resetRightPanelScroll\(\)/);
   assert.match(client,/function selectCandidate\(candidateId\)[\s\S]*?resetRightPanelScroll\(\)/);
   assert.match(client,/function showPlaceOverview\(\)[\s\S]*?scrollRightPanelToEditor\(\)/);

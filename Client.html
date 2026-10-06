@@ -292,7 +292,8 @@
     requestAnimationFrame(() => {
       const panel = document.querySelector('.right-panel');
       const editor = state.selectedPointId ? $('pointEditor') : $('placeEditor');
-      panel.scrollTop = editor && !editor.hidden ? editor.offsetTop : 0;
+      if (editor && !editor.hidden) panel.scrollTop += editor.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+      else panel.scrollTop = 0;
     });
   }
   function fitCurrentPlace(pointId) {
