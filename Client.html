@@ -225,6 +225,7 @@
     resetTransient();
     setDirty(false);
     renderAll();
+    resetRightPanelScroll();
     fitCurrentPlace(pointId);
   }
 
@@ -235,6 +236,7 @@
     state.dragPointId = null;
     state.selectedPointId = pointId;
     renderAll();
+    scrollRightPanelToEditor();
     const point = state.draftPoints.find(p => (p.point_id || p._temp_id) === pointId);
     if (point) map.panTo([point['中心緯度'], point['中心経度']]);
   }
@@ -245,6 +247,7 @@
     state.dragPointId = null;
     state.moveSession = null;
     renderAll();
+    scrollRightPanelToEditor();
     fitCurrentPlace();
   }
 
@@ -265,6 +268,7 @@
     resetTransient();
     setDirty(false);
     renderAll();
+    resetRightPanelScroll();
     requestAnimationFrame(scrollSelectedCandidateIntoView);
     focusCandidate(c);
   }
@@ -278,6 +282,18 @@
     const coords = [[candidate['基準緯度'],candidate['基準経度']], ...contextPoints.map(p => [p['中心緯度'],p['中心経度']])];
     if (coords.length > 1) map.fitBounds(L.latLngBounds(coords), { padding:[70,70], maxZoom:17 });
     else map.setView(coords[0],17);
+  }
+
+  function resetRightPanelScroll() {
+    requestAnimationFrame(() => { document.querySelector('.right-panel').scrollTop = 0; });
+  }
+
+  function scrollRightPanelToEditor() {
+    requestAnimationFrame(() => {
+      const panel = document.querySelector('.right-panel');
+      const editor = state.selectedPointId ? $('pointEditor') : $('placeEditor');
+      panel.scrollTop = editor && !editor.hidden ? editor.offsetTop : 0;
+    });
   }
   function fitCurrentPlace(pointId) {
     const selected = state.draftPoints.find(p => (p.point_id || p._temp_id) === pointId);
@@ -596,6 +612,7 @@
     state.placement = 'new-place';
     setDirty(false);
     renderAll();
+    resetRightPanelScroll();
     toast('地図をクリックして、最初の乗降位置を指定してください。');
   }
   function startAddPoint() {
@@ -631,6 +648,7 @@
       state.addFlowPointId = point._temp_id;
       markDirty();
       renderAll();
+      scrollRightPanelToEditor();
     } else if (state.placement === 'add-point') {
       const point = newPoint(event.latlng,state.draftPoints.length + 1);
       point.place_id = state.draftPlace.place_id;
@@ -644,6 +662,7 @@
       state.addFlowPointId = point._temp_id;
       markDirty();
       renderAll();
+      scrollRightPanelToEditor();
     }
   });
 

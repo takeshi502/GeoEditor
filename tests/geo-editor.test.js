@@ -453,8 +453,27 @@ test('point切替はdraftを維持し、移動操作中だけ確認して地図�
   assert.match(selectPointBody[1],/state\.moveSession/);
   assert.match(selectPointBody[1],/state\.selectedPointId = pointId/);
   assert.doesNotMatch(selectPointBody[1],/state\.draftPoints = \[\]/);
+  assert.match(selectPointBody[1],/scrollRightPanelToEditor\(\)/);
   assert.match(selectPointBody[1],/map\.panTo/);
   assert.match(client,/marker\.on\('click', \(\) => inContext \? selectPoint\(id\)/);
+});
+
+test('右カラム上部を固定せず全体を1つの縦スクロール領域にする', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
+  const navigatorRule=styles.match(/\.point-navigator \{([^}]*)\}/);
+  const panelRule=styles.match(/\.right-panel \{([^}]*)\}/);
+  assert.ok(navigatorRule);
+  assert.ok(panelRule);
+  assert.match(navigatorRule[1],/position:static/);
+  assert.doesNotMatch(navigatorRule[1],/position:(?:sticky|fixed)/);
+  assert.match(panelRule[1],/min-height:0/);
+  assert.match(panelRule[1],/overflow-y:auto/);
+  assert.match(client,/function resetRightPanelScroll\(\)[\s\S]*?right-panel'\)\.scrollTop = 0/);
+  assert.match(client,/function scrollRightPanelToEditor\(\)[\s\S]*?editor\.offsetTop/);
+  assert.match(client,/function selectPlace\(placeId, pointId\)[\s\S]*?resetRightPanelScroll\(\)/);
+  assert.match(client,/function selectCandidate\(candidateId\)[\s\S]*?resetRightPanelScroll\(\)/);
+  assert.match(client,/function showPlaceOverview\(\)[\s\S]*?scrollRightPanelToEditor\(\)/);
 });
 
 test('乗降位置追加は位置指定・内容確認・保存のガイドを表示する', () => {

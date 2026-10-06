@@ -77,8 +77,8 @@
   .step.active { background:#fff; color:#172033; font-weight:800; }
   .toast { position:absolute; z-index:600; left:50%; bottom:20px; transform:translateX(-50%); background:#172033; color:white; padding:10px 14px; border-radius:8px; max-width:80%; }
 
-  .right-panel { border-left:1px solid var(--line); padding:0; }
-  .point-navigator { position:sticky; top:0; z-index:3; padding:15px 18px 13px; background:#fff; border-bottom:1px solid var(--line); box-shadow:0 4px 12px #1720330d; }
+  .right-panel { min-height:0; overflow-x:hidden; overflow-y:auto; border-left:1px solid var(--line); padding:0; }
+  .point-navigator { position:static; padding:15px 18px 13px; background:#fff; border-bottom:1px solid var(--line); }
   .target-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
   .target-heading strong,.target-heading small { display:block; }
   .target-heading strong { margin-top:3px; font-size:18px; }
