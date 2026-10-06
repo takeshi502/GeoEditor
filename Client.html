@@ -7,7 +7,9 @@
     mapContextPlaceId: null, mapContextPointId: null,
     draftPlace: null, draftPoints: [], original: null,
     dirty: false, placement: null, addFlowPointId: null, dragPointId: null,
-    moveSession: null, mergeFlow: null, query: ''
+    moveSession: null, mergeFlow: null, query: '',
+    placeOrderCache: { signature:null, records:[] },
+    listView: { scrollTop:0, lastPlaceId:null, lastCandidateId:null, restorePending:false }
   };
   const $ = id => document.getElementById(id);
   const esc = value => String(value == null ? '' : value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -63,19 +65,48 @@
     const q = state.query.toLocaleLowerCase('ja');
     const pointNames = {};
     state.points.forEach(p => { (pointNames[p.place_id] ||= []).push(p['ポイント名']); });
-    const places = state.places.filter(p => p['有効'] !== false && [p['地点名'], p['別名'], ...(pointNames[p.place_id] || [])].join(' ').toLocaleLowerCase('ja').includes(q));
-    $('placeCount').textContent = `${places.length}件`;
-    $('placeList').innerHTML = places.map(p => {
+    const placeRecords = orderedPlaceRecords().filter(record => [record.place['地点名'], record.place['別名'], ...(pointNames[record.place.place_id] || [])].join(' ').toLocaleLowerCase('ja').includes(q));
+    $('placeCount').textContent = `${placeRecords.length}件`;
+    let previousGroupKey = null;
+    $('placeList').innerHTML = placeRecords.map(record => {
+      const p = record.place;
       const count = state.points.filter(point => point.place_id === p.place_id && point['有効'] !== false).length;
       const active = state.mergeFlow && p.place_id === state.mergeFlow.targetPlaceId ? 'merge-target' : p.place_id === state.selectedPlaceId ? 'active' : '';
-      return `<button class="list-item ${active}" data-place="${esc(p.place_id)}"><span class="list-title">${esc(p['地点名'])}</span><span class="list-meta">乗降位置 ${count}か所 · ${esc(p['別名'] || p.place_id)}</span></button>`;
+      const recent = !state.selectedPlaceId && p.place_id === state.listView.lastPlaceId ? 'recent' : '';
+      const heading = record.groupLabel && record.groupKey !== previousGroupKey ? `<div class="place-group-label">${esc(record.groupLabel)}</div>` : '';
+      previousGroupKey = record.groupKey;
+      return `${heading}<button class="list-item ${active} ${recent}" data-place="${esc(p.place_id)}"><span class="list-title">${esc(p['地点名'])}</span><span class="list-meta">乗降位置 ${count}か所 · ${esc(p['別名'] || p.place_id)}</span></button>`;
     }).join('') || '<div class="list-meta">該当なし</div>';
     $('placeList').querySelectorAll('[data-place]').forEach(el => el.addEventListener('click', () => state.mergeFlow ? chooseMergeTarget(el.dataset.place) : selectPlace(el.dataset.place)));
 
     const candidates = state.candidates.filter(c => !['promoted','merged','rejected'].includes(c['候補状態']) && String(c['候補名']).toLocaleLowerCase('ja').includes(q));
     $('candidateCount').textContent = `${candidates.length}件`;
-    $('candidateList').innerHTML = candidates.map(c => `<button class="list-item ${c.candidate_id === state.selectedCandidateId ? 'active' : ''}" data-candidate="${esc(c.candidate_id)}"><span class="list-title">${esc(c['候補名'])}</span><span class="list-meta">確認 ${esc(c['確認回数'])}回 · ${esc(c['候補状態'])}</span></button>`).join('') || '<div class="list-meta">未処理候補なし</div>';
+    $('candidateList').innerHTML = candidates.map(c => `<button class="list-item ${c.candidate_id === state.selectedCandidateId ? 'active' : ''} ${!state.selectedCandidateId && c.candidate_id === state.listView.lastCandidateId ? 'recent' : ''}" data-candidate="${esc(c.candidate_id)}"><span class="list-title">${esc(c['候補名'])}</span><span class="list-meta">確認 ${esc(c['確認回数'])}回 · ${esc(c['候補状態'])}</span></button>`).join('') || '<div class="list-meta">未処理候補なし</div>';
     $('candidateList').querySelectorAll('[data-candidate]').forEach(el => el.addEventListener('click', () => selectCandidate(el.dataset.candidate)));
+  }
+
+  function orderedPlaceRecords() {
+    const signature = GeoPlaceOrder.signature(state.places, state.points);
+    if (state.placeOrderCache.signature !== signature) {
+      state.placeOrderCache = { signature, records:GeoPlaceOrder.orderPlaces(state.places, state.points, state.baseAreas) };
+    }
+    return state.placeOrderCache.records;
+  }
+
+  function rememberListView(placeId, candidateId) {
+    const panel = document.querySelector('.left-panel');
+    if (panel && !$('workspace').classList.contains('focus-mode')) state.listView.scrollTop = panel.scrollTop;
+    if (placeId) state.listView.lastPlaceId = placeId;
+    if (candidateId) state.listView.lastCandidateId = candidateId;
+  }
+
+  function restoreListView() {
+    if (!state.listView.restorePending) return;
+    requestAnimationFrame(() => {
+      const panel = document.querySelector('.left-panel');
+      if (panel) panel.scrollTop = state.listView.scrollTop;
+      state.listView.restorePending = false;
+    });
   }
 
   function renderWorkspace() {
@@ -185,6 +216,7 @@
     if (!canLeave()) return;
     const place = state.places.find(p => p.place_id === placeId);
     if (!place) return;
+    rememberListView(placeId, null);
     state.selectedPlaceId = placeId;
     state.selectedCandidateId = null;
     state.mapContextPlaceId = null;
@@ -221,6 +253,7 @@
   function selectCandidate(candidateId) {
     const c = state.candidates.find(item => item.candidate_id === candidateId);
     if (!c || !canLeave()) return;
+    rememberListView(null, candidateId);
     if (state.selectedPlaceId) {
       state.mapContextPlaceId = state.selectedPlaceId;
       state.mapContextPointId = state.selectedPointId;
@@ -681,9 +714,13 @@
 
   function backToList(force) {
     if (!force && !canLeave()) return;
+    if (state.selectedPlaceId) state.listView.lastPlaceId = state.selectedPlaceId;
+    if (state.selectedCandidateId) state.listView.lastCandidateId = state.selectedCandidateId;
     clearSelection();
     setDirty(false);
+    state.listView.restorePending = true;
     renderAll();
+    restoreListView();
     fitData();
   }
   function clearSelection() {
@@ -753,7 +790,12 @@
     clearSelection(); setDirty(false); renderAll(); fitData();
   }
 
-  $('searchInput').addEventListener('input', e => { state.query=e.target.value; renderLists(); });
+  $('searchInput').addEventListener('input', e => {
+    state.query=e.target.value;
+    state.listView.scrollTop=0;
+    renderLists();
+    document.querySelector('.left-panel').scrollTop=0;
+  });
   $('newPlaceBtn').addEventListener('click',startNewPlace);
   $('addPointBtn').addEventListener('click',startAddPoint);
   $('placeOverviewBtn').addEventListener('click',showPlaceOverview);

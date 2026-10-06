@@ -15,6 +15,10 @@ const context = vm.createContext({
 for (const name of ['Schema.gs','Code.gs','Validation.gs','GeoMath.gs','PlaceService.gs','PlaceMergeService.gs','CandidateService.gs']) {
   vm.runInContext(fs.readFileSync(path.join(root, name), 'utf8'), context, { filename:name });
 }
+const spatialContext = vm.createContext({ window:{}, console });
+const spatialSource = fs.readFileSync(path.join(root, 'SpatialOrder.html'), 'utf8').match(/^<script>\s*([\s\S]*?)\s*<\/script>\s*$/)[1];
+vm.runInContext(spatialSource, spatialContext, { filename:'SpatialOrder.html' });
+const spatial = spatialContext.window.GeoPlaceOrder;
 
 function point(overrides = {}) {
   return Object.assign({ point_id:'p1', place_id:'a', 'ポイント名':'main', '表示順':1, '中心緯度':26, '中心経度':127, '判定半径_m':20, '最大GPS精度_m':20, '優先度':100, '有効':true, revision:1 }, overrides);
@@ -64,6 +68,42 @@ test('正式schemaの列順と列数を検証する', () => {
 
 test('距離計算は既知の緯度差をメートルで返す', () => {
   assert.ok(Math.abs(context.distanceMeters_(0, 0, 0.001, 0) - 111.195) < 0.2);
+});
+
+test('登録地点はbase_area_idごとにまとまり、同一データなら安定した空間順になる', () => {
+  const places=[
+    place({place_id:'a','地点名':'A',base_area_id:'base-1'}),
+    place({place_id:'b','地点名':'B',base_area_id:''}),
+    place({place_id:'c','地点名':'C',base_area_id:'base-1'}),
+    place({place_id:'d','地点名':'D',base_area_id:''})
+  ];
+  const points=[
+    point({point_id:'pa',place_id:'a','中心緯度':26.30,'中心経度':127.76}),
+    point({point_id:'pb',place_id:'b','中心緯度':26.31,'中心経度':127.77}),
+    point({point_id:'pc',place_id:'c','中心緯度':26.32,'中心経度':127.78}),
+    point({point_id:'pd',place_id:'d','中心緯度':27.20,'中心経度':128.10})
+  ];
+  const bases=[{base_area_id:'base-1','基地名':'フォスター'}];
+  const first=Array.from(spatial.orderPlaces(places,points,bases), record => record.place.place_id);
+  const second=Array.from(spatial.orderPlaces(places.slice().reverse(),points.slice().reverse(),bases), record => record.place.place_id);
+  assert.deepEqual(first,second);
+  assert.equal(Math.abs(first.indexOf('a')-first.indexOf('c')),1);
+  assert.equal(spatial.orderPlaces(places,points,bases).filter(record => record.groupLabel === 'フォスター').length,2);
+});
+
+test('近い地点を連続させ、複数point地点は表示順先頭の有効pointで1件として扱う', () => {
+  const places=[place({place_id:'near-1'}),place({place_id:'near-2'}),place({place_id:'far'})];
+  const points=[
+    point({point_id:'n1-secondary',place_id:'near-1','表示順':2,'中心緯度':27.20,'中心経度':128.10}),
+    point({point_id:'n1-main',place_id:'near-1','表示順':1,'中心緯度':26.3000,'中心経度':127.7600}),
+    point({point_id:'n2',place_id:'near-2','表示順':1,'中心緯度':26.3002,'中心経度':127.7602}),
+    point({point_id:'far',place_id:'far','表示順':1,'中心緯度':27.2000,'中心経度':128.1000})
+  ];
+  assert.equal(spatial.representativePoint('near-1',points).point_id,'n1-main');
+  const ordered=spatial.orderPlaces(places,points,[]);
+  const ids=Array.from(ordered, record => record.place.place_id);
+  assert.equal(ordered.filter(record => record.place.place_id === 'near-1').length,1);
+  assert.equal(Math.abs(ids.indexOf('near-1')-ids.indexOf('near-2')),1);
 });
 
 test('判定円重複量を計算する', () => {
@@ -361,6 +401,25 @@ test('地点一覧から地点専用編集モードへ入り、地点全体へ�
   assert.match(client,/workspace'\)\.classList\.toggle\('focus-mode', focused\)/);
   assert.match(client,/function showPlaceOverview\(\)[\s\S]*?state\.selectedPointId = null/);
   assert.match(client,/function backToList\(force\)[\s\S]*?clearSelection\(\)/);
+});
+
+test('地点一覧は安定した空間順をキャッシュし、一覧復帰時の表示状態を復元する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const index=fs.readFileSync(path.join(root,'Index.html'),'utf8');
+  const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
+  assert.match(index,/include\('SpatialOrder'\)/);
+  assert.match(client,/placeOrderCache: \{ signature:null, records:\[\] \}/);
+  assert.match(client,/GeoPlaceOrder\.signature\(state\.places, state\.points\)/);
+  assert.match(client,/GeoPlaceOrder\.orderPlaces\(state\.places, state\.points, state\.baseAreas\)/);
+  assert.match(client,/listView: \{ scrollTop:0, lastPlaceId:null, lastCandidateId:null, restorePending:false \}/);
+  assert.match(client,/state\.listView\.scrollTop = panel\.scrollTop/);
+  assert.match(client,/if \(panel\) panel\.scrollTop = state\.listView\.scrollTop/);
+  assert.match(client,/state\.listView\.restorePending = true;[\s\S]*?renderAll\(\);[\s\S]*?restoreListView\(\)/);
+  assert.match(client,/state\.query=e\.target\.value/);
+  const backToListBody=client.match(/function backToList\(force\) \{([\s\S]*?)\n  \}\n  function clearSelection/);
+  assert.ok(backToListBody);
+  assert.doesNotMatch(backToListBody[1],/state\.query\s*=/);
+  assert.match(styles,/\.list-item\.recent/);
 });
 
 test('全乗降位置を常時一覧表示し、一覧と地図は共通のpoint選択処理を使う', () => {

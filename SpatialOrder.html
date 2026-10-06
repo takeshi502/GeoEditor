@@ -1,0 +1,90 @@
+<script>
+(() => {
+  'use strict';
+  const alphabet = '0123456789bcdefghjkmnpqrstuvwxyz';
+
+  function number(value, fallback) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function text(value) {
+    return String(value == null ? '' : value);
+  }
+
+  function representativePoint(placeId, points) {
+    return points.filter(point => point.place_id === placeId && point['有効'] !== false)
+      .slice()
+      .sort((a, b) => number(a['表示順'], Number.MAX_SAFE_INTEGER) - number(b['表示順'], Number.MAX_SAFE_INTEGER)
+        || number(b['優先度'], 0) - number(a['優先度'], 0)
+        || text(a.point_id).localeCompare(text(b.point_id)))[0] || null;
+  }
+
+  function geohash(latitude, longitude, precision) {
+    const lat = number(latitude, NaN);
+    const lng = number(longitude, NaN);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return 'zzzzzzz';
+    let latRange = [-90, 90], lngRange = [-180, 180], even = true, bits = 0, value = 0, result = '';
+    const length = precision || 7;
+    while (result.length < length) {
+      const range = even ? lngRange : latRange;
+      const coordinate = even ? lng : lat;
+      const midpoint = (range[0] + range[1]) / 2;
+      value = (value << 1) | (coordinate >= midpoint ? 1 : 0);
+      if (coordinate >= midpoint) range[0] = midpoint; else range[1] = midpoint;
+      even = !even;
+      bits += 1;
+      if (bits === 5) {
+        result += alphabet[value];
+        bits = 0;
+        value = 0;
+      }
+    }
+    return result;
+  }
+
+  function baseName(baseId, baseAreas) {
+    const base = baseAreas.find(item => text(item.base_area_id) === text(baseId)) || {};
+    return text(base['基地名'] || base['base_area_name'] || base['名称'] || baseId);
+  }
+
+  function records(places, points, baseAreas) {
+    return places.filter(place => place['有効'] !== false).map(place => {
+      const point = representativePoint(place.place_id, points);
+      const spatialKey = point ? geohash(point['中心緯度'], point['中心経度'], 7) : 'zzzzzzz';
+      const baseId = text(place.base_area_id).trim();
+      return {
+        place,
+        point,
+        spatialKey,
+        groupKey:baseId ? `base:${baseId}` : `geo:${spatialKey.slice(0, 4)}`,
+        groupLabel:baseId ? baseName(baseId, baseAreas) : ''
+      };
+    });
+  }
+
+  function orderPlaces(places, points, baseAreas) {
+    const grouped = new Map();
+    records(places, points, baseAreas).forEach(record => {
+      if (!grouped.has(record.groupKey)) grouped.set(record.groupKey, []);
+      grouped.get(record.groupKey).push(record);
+    });
+    return Array.from(grouped.entries()).map(([groupKey, items]) => {
+      items.sort((a, b) => a.spatialKey.localeCompare(b.spatialKey)
+        || text(a.place['地点名']).localeCompare(text(b.place['地点名']), 'ja')
+        || text(a.place.place_id).localeCompare(text(b.place.place_id)));
+      return { groupKey, items, firstSpatialKey:items[0].spatialKey };
+    }).sort((a, b) => a.firstSpatialKey.localeCompare(b.firstSpatialKey) || a.groupKey.localeCompare(b.groupKey))
+      .flatMap(group => group.items);
+  }
+
+  function signature(places, points) {
+    return records(places, points, []).map(record => {
+      const place = record.place, point = record.point || {};
+      return [place.place_id, place['地点名'], place.base_area_id, point.point_id, point['表示順'], point['優先度'], point['中心緯度'], point['中心経度']].map(text).join('|');
+    }).sort().join('\n');
+  }
+
+  window.GeoPlaceOrder = Object.freeze({ geohash, representativePoint, orderPlaces, signature });
+})();
+</script>
