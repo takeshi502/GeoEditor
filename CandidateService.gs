@@ -21,10 +21,12 @@ function resolveCandidate_(payload) {
 
     var result;
     if (action === 'promote') {
+      var promotePosition = candidateRegistrationPosition_(payload);
       var bundle = payload.bundle || {};
       bundle.place = bundle.place || {};
       if (!bundle.place['地点名']) bundle.place['地点名'] = candidate['候補名'];
       bundle.points = bundle.points && bundle.points.length ? bundle.points : [candidatePoint_(candidate, payload.point || {})];
+      applyCandidateRegistrationPosition_(bundle.points[0], promotePosition);
       var placeStart = placesTable.sheet.getLastRow() + 1;
       var pointStart = pointsTable.sheet.getLastRow() + 1;
       result = createPlaceBundleWithTables_(bundle, placesTable, pointsTable);
@@ -54,6 +56,7 @@ function resolveCandidate_(payload) {
       var createdPoint = null;
       if (action === 'add_point') {
         var sourcePoint = candidatePoint_(candidate, payload.point || {});
+        applyCandidateRegistrationPosition_(sourcePoint, candidateRegistrationPosition_(payload));
         validatePoint_(sourcePoint, placeId, true);
         createdPoint = normalizePoint_(sourcePoint, id_('point'), placeId, now, true);
         warnings = overlapWarnings_([createdPoint], pointsTable.rows.filter(function (point) { return point.place_id !== placeId; }));
@@ -78,6 +81,26 @@ function resolveCandidate_(payload) {
     }
     return result;
   });
+}
+
+function candidateRegistrationPosition_(payload) {
+  var position = payload && payload.registration_position;
+  if (position == null) return null;
+  if (typeof position !== 'object') throw geoError_('VALIDATION_ERROR', '登録予定位置の形式が不正です。');
+  if (position.latitude == null || position.latitude === '' || position.longitude == null || position.longitude === '') {
+    throw geoError_('VALIDATION_ERROR', '登録予定位置の緯度・経度は必須です。');
+  }
+  return {
+    latitude: finiteNumber_(position.latitude, '登録予定位置の緯度', -90, 90),
+    longitude: finiteNumber_(position.longitude, '登録予定位置の経度', -180, 180)
+  };
+}
+
+function applyCandidateRegistrationPosition_(point, position) {
+  if (!position) return point;
+  point['中心緯度'] = position.latitude;
+  point['中心経度'] = position.longitude;
+  return point;
 }
 
 function candidatePoint_(candidate, overrides) {

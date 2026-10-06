@@ -277,6 +277,53 @@ test('candidate reject', () => {
   assert.equal(t.candidates.sheet.rows[0]['候補状態'],'rejected');
 });
 
+test('candidate promoteは調整した登録予定位置をpointへ使い候補元座標を保持する', () => {
+  const t=candidateHarness();
+  const res=context.resolveCandidate_({
+    action:'promote', candidate_id:'c1', revision:1,
+    registration_position:{latitude:26.1234,longitude:127.5678},
+    bundle:{place:place({place_id:undefined,revision:undefined,'地点名':'調整済み候補'}),points:[point({point_id:undefined,place_id:undefined,revision:undefined})]}
+  });
+  assert.equal(res.data.points[0]['中心緯度'],26.1234);
+  assert.equal(res.data.points[0]['中心経度'],127.5678);
+  assert.equal(t.candidates.sheet.rows[0]['基準緯度'],26);
+  assert.equal(t.candidates.sheet.rows[0]['基準経度'],127);
+});
+
+test('candidate add_pointは調整した登録予定位置だけを新pointへ反映する', () => {
+  const t=candidateHarness();
+  const res=context.resolveCandidate_({
+    action:'add_point', candidate_id:'c1', revision:1, place_id:'a', place_revision:1,
+    registration_position:{latitude:26.2222,longitude:127.3333},
+    point:point({point_id:undefined,place_id:undefined,revision:undefined,'ポイント名':'調整入口'})
+  });
+  assert.equal(res.data.point['中心緯度'],26.2222);
+  assert.equal(res.data.point['中心経度'],127.3333);
+  assert.equal(t.candidates.sheet.rows[0]['基準緯度'],26);
+  assert.equal(t.candidates.sheet.rows[0]['基準経度'],127);
+});
+
+test('candidate mergeとrejectはregistration_positionを解釈しない', () => {
+  let t=candidateHarness();
+  assert.doesNotThrow(() => context.resolveCandidate_({action:'merge',candidate_id:'c1',revision:1,place_id:'a',place_revision:1,registration_position:{latitude:999,longitude:999}}));
+  assert.equal(t.points.sheet.appended.length,0);
+  t=candidateHarness();
+  assert.doesNotThrow(() => context.resolveCandidate_({action:'reject',candidate_id:'c1',revision:1,registration_position:{latitude:999,longitude:999}}));
+  assert.equal(t.points.sheet.appended.length,0);
+});
+
+test('candidate登録予定位置はサーバーで緯度経度範囲を検証する', () => {
+  const t=candidateHarness();
+  assert.throws(() => context.resolveCandidate_({
+    action:'add_point', candidate_id:'c1', revision:1, place_id:'a', place_revision:1,
+    registration_position:{latitude:91,longitude:127}, point:point({'ポイント名':'不正位置'})
+  }), error => error.code === 'VALIDATION_ERROR');
+  assert.equal(t.points.sheet.appended.length,0);
+  assert.equal(t.candidates.sheet.rows[0]['候補状態'],'pending');
+  assert.throws(() => context.candidateRegistrationPosition_({registration_position:{latitude:null,longitude:127}}), error => error.code === 'VALIDATION_ERROR');
+  assert.throws(() => context.candidateRegistrationPosition_({registration_position:{latitude:26,longitude:'NaN'}}), error => error.code === 'VALIDATION_ERROR');
+});
+
 function mergeHarness() {
   const places=table('places',[place(),place({place_id:'b','地点名':'B',revision:4})]);
   const points=table('points',[point(),point({point_id:'p2',place_id:'b','ポイント名':'裏側入口','表示順':1,revision:3})]);
@@ -380,6 +427,30 @@ test('候補選択は左一覧へ同期し、正式地点の地図コンテキ�
   assert.match(client,/const activePlaceId = state\.selectedPlaceId \|\| state\.mapContextPlaceId/);
   assert.match(client,/candidate-icon\$\{selected \? ' selected' : ''\}/);
   assert.match(styles,/\.candidate-icon\.selected/);
+});
+
+test('候補の登録予定位置はクライアントdraftでのみ移動し候補元座標を保持する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
+  assert.match(client,/candidateDraft: null/);
+  assert.match(client,/originalLatitude:location\['中心緯度'\]/);
+  assert.match(client,/draggable:!!\(candidateDraft && candidateDraft\.editing\)/);
+  assert.match(client,/marker\.on\('dragend', event => previewCandidatePosition/);
+  assert.match(client,/id="moveCandidatePosition"/);
+  assert.match(client,/id="confirmCandidatePosition"/);
+  assert.match(client,/id="restoreCandidateOriginal"/);
+  assert.match(client,/id="cancelCandidateMove"/);
+  assert.match(client,/draft\.latitude = draft\.originalLatitude/);
+  assert.match(client,/draft\.longitude = draft\.originalLongitude/);
+  assert.match(styles,/\.candidate-icon\.adjusting/);
+});
+
+test('候補位置調整はpromoteとadd_pointだけregistration_positionへ渡す', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/if \(action === 'promote' \|\| action === 'add_point'\) payload\.registration_position/);
+  assert.match(client,/function hasUnsavedChanges\(\) \{ return state\.dirty \|\| candidatePositionChanged\(\); \}/);
+  assert.match(client,/候補の登録予定位置が変更されています。変更を破棄して移動しますか？/);
+  assert.match(client,/window\.addEventListener\('beforeunload',[\s\S]*?hasUnsavedChanges\(\)/);
 });
 
 test('候補マーカー選択は未保存変更保護を通り、正式point選択を維持する', () => {
