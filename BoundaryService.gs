@@ -1,4 +1,4 @@
-var SMART_LOGGER_BOUNDARY_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxiH0xNWxPQOpV0ku6rT4I2jpiznaL8s7crU2gfIxtJ_8mZN8jpZQlTTEgMKJ-cWWpG4w/exec';
+var SMART_LOGGER_BOUNDARY_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxTRBdftgH2xs0aGTSWRMOaL1v2rDKatiqhalIFDbdSWJSVNtdPN13XHHovygjJj1T0VQ/exec';
 var GEO_BOUNDARY_CONFIG = {
   municipality: {
     version: 'n03-20260101-47-r1',
