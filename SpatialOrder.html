@@ -48,36 +48,25 @@
     return text(base['基地名'] || base['base_area_name'] || base['名称'] || baseId);
   }
 
-  function municipalityForPoint(point, municipalities) {
-    if (!point) return null;
+  function municipalityForPoint(point, municipalities, boundaryIndex) {
+    if (!point || !boundaryIndex) return null;
     const lat = number(point['中心緯度'], NaN);
     const lng = number(point['中心経度'], NaN);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    return municipalities.filter(item => item['有効'] !== false)
-      .filter(item => lat >= number(item.bbox_min_lat, Infinity)
-        && lat <= number(item.bbox_max_lat, -Infinity)
-        && lng >= number(item.bbox_min_lng, Infinity)
-        && lng <= number(item.bbox_max_lng, -Infinity))
-      .slice()
-      .sort((a, b) => municipalityBoxArea(a) - municipalityBoxArea(b)
-        || text(a.municipality_id).localeCompare(text(b.municipality_id)))[0] || null;
-  }
-
-  function municipalityBoxArea(item) {
-    return Math.max(0, number(item.bbox_max_lat, 0) - number(item.bbox_min_lat, 0))
-      * Math.max(0, number(item.bbox_max_lng, 0) - number(item.bbox_min_lng, 0));
+    const municipalityId = boundaryIndex.find(lat,lng);
+    return municipalities.find(item => item['有効'] !== false && text(item.municipality_id) === text(municipalityId)) || null;
   }
 
   function municipalityName(item) {
     return text(item && (item['市町村表示名'] || item['市町村正式名'] || item.municipality_id));
   }
 
-  function records(places, points, baseAreas, municipalities) {
+  function records(places, points, baseAreas, municipalities, boundaryIndex) {
     return places.filter(place => place['有効'] !== false).map(place => {
       const point = representativePoint(place.place_id, points);
       const spatialKey = point ? geohash(point['中心緯度'], point['中心経度'], 7) : 'zzzzzzz';
       const baseId = text(place.base_area_id).trim();
-      const municipality = baseId ? null : municipalityForPoint(point, municipalities || []);
+      const municipality = baseId ? null : municipalityForPoint(point, municipalities || [], boundaryIndex);
       const municipalityId = text(municipality && municipality.municipality_id);
       return {
         place,
@@ -90,9 +79,9 @@
     });
   }
 
-  function orderPlaces(places, points, baseAreas, municipalities) {
+  function orderPlaces(places, points, baseAreas, municipalities, boundaryIndex) {
     const grouped = new Map();
-    records(places, points, baseAreas, municipalities || []).forEach(record => {
+    records(places, points, baseAreas, municipalities || [], boundaryIndex).forEach(record => {
       if (!grouped.has(record.groupKey)) grouped.set(record.groupKey, []);
       grouped.get(record.groupKey).push(record);
     });
@@ -108,8 +97,8 @@
       .flatMap(group => group.items);
   }
 
-  function signature(places, points, baseAreas, municipalities) {
-    const recordSignature = records(places, points, baseAreas || [], municipalities || []).map(record => {
+  function signature(places, points, baseAreas, municipalities, boundaryIndex) {
+    const recordSignature = records(places, points, baseAreas || [], municipalities || [], boundaryIndex).map(record => {
       const place = record.place, point = record.point || {};
       return [place.place_id, place['地点名'], place.base_area_id, point.point_id, point['表示順'], point['優先度'], point['中心緯度'], point['中心経度'], record.groupKey, record.groupLabel].map(text).join('|');
     }).sort().join('\n');

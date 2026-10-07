@@ -35,6 +35,9 @@
   button.compact { padding:6px 9px; font-size:12px; }
   .topbar { height:58px; display:flex; align-items:center; gap:20px; padding:0 18px; background:#fff; border-bottom:1px solid var(--line); }
   .brand strong { font-size:19px; letter-spacing:-.3px; } .version { margin-left:8px; color:var(--muted); font-size:12px; }
+  .mode-switch { display:flex; gap:3px; padding:3px; border-radius:10px; background:#eef2f7; }
+  .mode-switch button { border:0; padding:6px 11px; background:transparent; color:#526174; font-size:12px; font-weight:700; }
+  .mode-switch button.active { background:#fff; color:var(--blue); box-shadow:0 1px 4px #0002; }
   .save-state { margin-left:auto; font-size:13px; color:var(--muted); } .save-state.dirty { color:#a15c00; font-weight:700; }
   .top-actions { display:flex; gap:8px; }
 
@@ -57,6 +60,8 @@
   .place-group-label { margin:14px 8px 4px; padding:0 2px 6px; color:#43546a; border-bottom:1px solid #d9e1eb; font-size:16px; line-height:1.35; font-weight:800; letter-spacing:.025em; }
   .list-title { font-weight:700; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .list-meta { font-size:11px; color:var(--muted); display:block; margin-top:3px; }
+  .boundary-status { margin:0 2px 12px; padding:9px 10px; border-radius:8px; background:#f4f7fa; color:var(--muted); font-size:11px; line-height:1.5; }
+  .boundary-error { color:var(--danger); font-weight:700; }
 
   .studio { min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); overflow:hidden; }
   .context-header { min-height:82px; background:#fff; border-bottom:1px solid var(--line); padding:13px 20px; display:flex; align-items:center; }
@@ -102,6 +107,8 @@
   .field-help { color:var(--muted); font-size:11px; line-height:1.5; margin-top:5px; }
   .check { display:flex; gap:8px; align-items:center; font-size:13px; } .check input { width:auto; }
   .readonly { padding:9px; background:#f6f8fa; border-radius:7px; color:#475467; font-size:13px; word-break:break-all; }
+  .readonly-badge { float:right; padding:4px 8px; border-radius:999px; background:#edf1f5; color:#526174; font-size:10px; font-weight:800; }
+  .boundary-toggle { margin:14px 0 18px; padding:10px; border:1px solid var(--line); border-radius:8px; }
   .badge { width:25px; height:25px; border-radius:50%; display:grid; place-items:center; background:#dceaff; color:#1459b8; font-weight:800; flex:none; }
   .section-card { border:1px solid var(--line); border-radius:10px; padding:13px; margin-bottom:12px; background:#fff; }
   .summary-card { background:linear-gradient(135deg,#f4f8ff,#fff); border:1px solid #cfe0f8; border-radius:12px; padding:14px; margin-bottom:15px; }

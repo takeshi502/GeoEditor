@@ -13,6 +13,10 @@ function getGeoEditorBootstrap() {
   return apiCall_(function () { return getGeoEditorBootstrap_(); });
 }
 
+function getGeoBoundary(kind) {
+  return apiCall_(function () { return getGeoBoundary_(kind); });
+}
+
 function getPlaceDetail(placeId) {
   return apiCall_(function () { return getPlaceDetail_(placeId); });
 }

@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const os = require('node:os');
+const crypto = require('node:crypto');
 
 const root = path.resolve(__dirname, '..');
 let uuidCounter = 0;
@@ -16,9 +18,19 @@ for (const name of ['Schema.gs','Code.gs','Validation.gs','GeoMath.gs','PlaceSer
   vm.runInContext(fs.readFileSync(path.join(root, name), 'utf8'), context, { filename:name });
 }
 const spatialContext = vm.createContext({ window:{}, console });
+const boundarySource = fs.readFileSync(path.join(root, 'BoundaryGeometry.html'), 'utf8').match(/^<script>\s*([\s\S]*?)\s*<\/script>\s*$/)[1];
+vm.runInContext(boundarySource, spatialContext, { filename:'BoundaryGeometry.html' });
 const spatialSource = fs.readFileSync(path.join(root, 'SpatialOrder.html'), 'utf8').match(/^<script>\s*([\s\S]*?)\s*<\/script>\s*$/)[1];
 vm.runInContext(spatialSource, spatialContext, { filename:'SpatialOrder.html' });
 const spatial = spatialContext.window.GeoPlaceOrder;
+const boundary = spatialContext.window.GeoBoundary;
+
+function boundaryIndex(features, idProperty='municipality_id') {
+  return boundary.buildIndex({type:'FeatureCollection',features}, {idProperty,cellSize:.05});
+}
+function rectangleFeature(id, minLat, minLng, maxLat, maxLng, idProperty='municipality_id') {
+  return {type:'Feature',properties:{[idProperty]:id},geometry:{type:'Polygon',coordinates:[[[minLng,minLat],[maxLng,minLat],[maxLng,maxLat],[minLng,maxLat],[minLng,minLat]]]}};
+}
 
 function point(overrides = {}) {
   return Object.assign({ point_id:'p1', place_id:'a', 'ポイント名':'main', '表示順':1, '中心緯度':26, '中心経度':127, '判定半径_m':20, '最大GPS精度_m':20, '優先度':100, '有効':true, revision:1 }, overrides);
@@ -113,7 +125,7 @@ test('近い地点を連続させ、複数point地点は表示順先頭の有効
   assert.equal(Math.abs(ids.indexOf('near-1')-ids.indexOf('near-2')),1);
 });
 
-test('基地外地点は代表pointの市町村bboxでグループ化し、基地グループを先に並べる', () => {
+test('基地外地点は代表pointの正式polygonでグループ化し、基地グループを先に並べる', () => {
   const places=[
     place({place_id:'base','地点名':'基地内',base_area_id:'base-1'}),
     place({place_id:'ginowan','地点名':'宜野湾',base_area_id:''}),
@@ -128,31 +140,63 @@ test('基地外地点は代表pointの市町村bboxでグループ化し、基�
     municipality(),
     municipality({municipality_id:'municipality-2','行政区域コード':'47326','市町村正式名':'北谷町','市町村表示名':'北谷町',bbox_min_lat:26.293,bbox_min_lng:127.742,bbox_max_lat:26.347,bbox_max_lng:127.786})
   ];
-  const ordered=spatial.orderPlaces(places,points,[baseArea()],municipalities);
+  const index=boundaryIndex([
+    rectangleFeature('municipality-1',26.24,127.72,26.31,127.80),
+    rectangleFeature('municipality-2',26.293,127.742,26.347,127.786)
+  ]);
+  const ordered=spatial.orderPlaces(places,points,[baseArea()],municipalities,index);
   assert.deepEqual(Array.from(ordered, record => record.groupLabel),['フォスター','宜野湾市','北谷町']);
   assert.equal(ordered[0].groupType,'base');
 });
 
-test('重複する市町村bboxでは最小範囲を選び、未判定地点も一覧に残す', () => {
+test('bbox候補が重なってもpolygon内側だけを選び、未判定地点も一覧に残す', () => {
   const broad=municipality({municipality_id:'broad','市町村表示名':'広域',bbox_min_lat:26.20,bbox_min_lng:127.70,bbox_max_lat:26.40,bbox_max_lng:127.90});
   const narrow=municipality({municipality_id:'narrow','市町村表示名':'狭域',bbox_min_lat:26.25,bbox_min_lng:127.74,bbox_max_lat:26.30,bbox_max_lng:127.79});
   const located=point({point_id:'located',place_id:'located','中心緯度':26.27,'中心経度':127.76});
-  assert.equal(spatial.municipalityForPoint(located,[broad,narrow]).municipality_id,'narrow');
+  const index=boundaryIndex([
+    rectangleFeature('broad',26.20,127.70,26.40,127.74),
+    rectangleFeature('narrow',26.25,127.74,26.30,127.79)
+  ]);
+  assert.equal(spatial.municipalityForPoint(located,[broad,narrow],index).municipality_id,'narrow');
   const ordered=spatial.orderPlaces(
     [place({place_id:'located'}),place({place_id:'unknown'})],
     [located,point({point_id:'unknown',place_id:'unknown','中心緯度':30,'中心経度':130})],
-    [],[broad,narrow]
+    [],[broad,narrow],index
   );
   assert.deepEqual(Array.from(ordered, record => record.groupLabel),['狭域','市町村未判定']);
 });
 
-test('基地所属地点は市町村bbox内でも基地グループだけに1件表示する', () => {
+test('基地所属地点は市町村polygon内でも基地グループだけに1件表示する', () => {
   const places=[place({place_id:'inside-base',base_area_id:'base-1'})];
   const points=[point({point_id:'inside-base-point',place_id:'inside-base','中心緯度':26.27,'中心経度':127.76})];
-  const ordered=spatial.orderPlaces(places,points,[baseArea()],[municipality()]);
+  const index=boundaryIndex([rectangleFeature('municipality-1',26.24,127.72,26.31,127.80)]);
+  const ordered=spatial.orderPlaces(places,points,[baseArea()],[municipality()],index);
   assert.equal(ordered.length,1);
   assert.equal(ordered[0].groupLabel,'フォスター');
   assert.equal(ordered[0].groupKey,'base:base-1');
+});
+
+test('Polygon/MultiPolygonは穴を外側とし境界線上を内側としてSmart Loggerと同じ判定をする', () => {
+  const index=boundaryIndex([{type:'Feature',properties:{municipality_id:'m'},geometry:{type:'MultiPolygon',coordinates:[
+    [[[127,26],[128,26],[128,27],[127,27],[127,26]],[[127.4,26.4],[127.6,26.4],[127.6,26.6],[127.4,26.6],[127.4,26.4]]],
+    [[[129,26],[130,26],[130,27],[129,27],[129,26]]]
+  ]}}]);
+  assert.equal(index.find(26.2,127.2),'m');
+  assert.equal(index.find(26.5,127.5),null);
+  assert.equal(index.find(26.5,129.5),'m');
+  assert.equal(index.find(26,127.5),'m');
+});
+
+test('正式polygonが未読込ならbboxだけで市町村を推測しない', () => {
+  const p=point({'中心緯度':26.27,'中心経度':127.76});
+  assert.equal(spatial.municipalityForPoint(p,[municipality()],null),null);
+});
+
+const officialMunicipalityAsset=path.join(os.homedir(),'.codex','.chatgpt-projects','g-p-6a86017f22e08191904accfa8aa448d3','SmartLoggerWeb','public','admin-boundaries','2026-01-01-r1','municipalities-okinawa-prefecture-2026-01-01-r1.geojson');
+test('Smart Logger正式GeoJSONで第2ゲートは那覇市だけに含まれる', {skip:!fs.existsSync(officialMunicipalityAsset)}, () => {
+  const collection=JSON.parse(fs.readFileSync(officialMunicipalityAsset,'utf8'));
+  const index=boundary.buildIndex(collection,{idProperty:'municipality_id',cellSize:.05});
+  assert.deepEqual(Array.from(index.matches(26.19565886378853,127.6590058207512)),['municipality_47201']);
 });
 
 test('判定円重複量を計算する', () => {
@@ -617,8 +661,8 @@ test('地点一覧は安定した空間順をキャッシュし、常設中も�
   const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
   assert.match(index,/include\('SpatialOrder'\)/);
   assert.match(client,/placeOrderCache: \{ signature:null, records:\[\] \}/);
-  assert.match(client,/GeoPlaceOrder\.signature\(state\.places, state\.points, state\.baseAreas, state\.municipalities\)/);
-  assert.match(client,/GeoPlaceOrder\.orderPlaces\(state\.places, state\.points, state\.baseAreas, state\.municipalities\)/);
+  assert.match(client,/GeoPlaceOrder\.signature\(state\.places, state\.points, state\.baseAreas, state\.municipalities, municipalityIndex\)/);
+  assert.match(client,/GeoPlaceOrder\.orderPlaces\(state\.places, state\.points, state\.baseAreas, state\.municipalities, municipalityIndex\)/);
   assert.match(styles,/\.place-group-label[^}]*font-size:16px/);
   assert.match(client,/const placeRecords = orderedPlaceRecords\(\)\.filter/);
   assert.match(client,/const heading = record\.groupLabel && record\.groupKey !== previousGroupKey/);
@@ -754,4 +798,39 @@ test('無効化済みの旧地点は通常一覧と地図から除外する', ()
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
   assert.match(client,/state\.places\.filter\(p => p\['有効'\] !== false/);
   assert.match(client,/isPlaceActive\(p\.place_id\)/);
+});
+
+test('地点・基地エリア・市町村境界の3モードとread-only境界診断を備える', () => {
+  const index=fs.readFileSync(path.join(root,'Index.html'),'utf8');
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const service=fs.readFileSync(path.join(root,'BoundaryService.gs'),'utf8');
+  assert.match(index,/id="modePlaces"/); assert.match(index,/id="modeBases"/); assert.match(index,/id="modeMunicipalities"/);
+  assert.match(index,/include\('BoundaryGeometry'\)/);
+  assert.match(client,/GeoBoundary\.buildIndex/);
+  assert.match(client,/GeoBoundary\.bboxCandidates/);
+  assert.match(client,/if \(state\.mode !== 'places'\) \{ inspectBoundaryPoint/);
+  assert.match(client,/readonly-badge/);
+  assert.match(client,/市町村bbox候補/);
+  assert.match(client,/市町村Polygon/);
+  assert.match(service,/SMART_LOGGER_BOUNDARY_ENDPOINT/);
+  assert.match(service,/BOUNDARY_INTEGRITY_ERROR/);
+  assert.match(service,/Utilities\.computeDigest/);
+  assert.doesNotMatch(service,/SpreadsheetApp|setValue|setValues|appendRow/);
+});
+
+test('境界取得サービスは種別をallowlistしSHA不一致を拒否する', () => {
+  const sample=Buffer.from(JSON.stringify({type:'FeatureCollection',features:[]}));
+  const serviceContext=vm.createContext({
+    console, JSON, Array, String, Error, encodeURIComponent,
+    geoError_:(code,message)=>Object.assign(new Error(message),{code}),
+    UrlFetchApp:{fetch:()=>({getResponseCode:()=>200,getBlob:()=>({getBytes:()=>Array.from(sample)}),getContentText:()=>sample.toString('utf8')})},
+    Utilities:{DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_alg,bytes)=>Array.from(crypto.createHash('sha256').update(Buffer.from(bytes)).digest(),value=>value>127?value-256:value)}
+  });
+  vm.runInContext(fs.readFileSync(path.join(root,'BoundaryService.gs'),'utf8'),serviceContext,{filename:'BoundaryService.gs'});
+  assert.throws(()=>serviceContext.getGeoBoundary_('town'),error=>error.code==='VALIDATION_ERROR');
+  assert.throws(()=>serviceContext.getGeoBoundary_('base'),error=>error.code==='BOUNDARY_INTEGRITY_ERROR');
+  serviceContext.GEO_BOUNDARY_CONFIG.base.sha256=crypto.createHash('sha256').update(sample).digest('hex');
+  const result=serviceContext.getGeoBoundary_('base');
+  assert.equal(result.geojson.type,'FeatureCollection');
+  assert.equal(result.sha256,serviceContext.GEO_BOUNDARY_CONFIG.base.sha256);
 });

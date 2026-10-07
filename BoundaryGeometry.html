@@ -1,0 +1,96 @@
+<script>
+(() => {
+  'use strict';
+  const EPSILON = 1e-10;
+
+  function finitePosition(value) {
+    return Array.isArray(value) && value.length >= 2 && Number.isFinite(value[0]) && Number.isFinite(value[1]);
+  }
+  function validPolygon(value) {
+    return Array.isArray(value) && value.length > 0
+      && value.every(ring => Array.isArray(ring) && ring.length >= 4 && ring.every(finitePosition));
+  }
+  function bboxFor(polygon) {
+    let minLng=Infinity,minLat=Infinity,maxLng=-Infinity,maxLat=-Infinity;
+    polygon.forEach(ring => ring.forEach(([lng,lat]) => {
+      minLng=Math.min(minLng,lng); minLat=Math.min(minLat,lat);
+      maxLng=Math.max(maxLng,lng); maxLat=Math.max(maxLat,lat);
+    }));
+    return [minLng,minLat,maxLng,maxLat];
+  }
+  function onSegment(lng,lat,a,b) {
+    const [x1,y1]=a,[x2,y2]=b;
+    const cross=(lng-x1)*(y2-y1)-(lat-y1)*(x2-x1);
+    const scale=Math.max(1,Math.abs(x2-x1)+Math.abs(y2-y1));
+    if (Math.abs(cross)>EPSILON*scale) return false;
+    return lng>=Math.min(x1,x2)-EPSILON && lng<=Math.max(x1,x2)+EPSILON
+      && lat>=Math.min(y1,y2)-EPSILON && lat<=Math.max(y1,y2)+EPSILON;
+  }
+  function ringBoundary(lng,lat,ring) {
+    for (let i=0,j=ring.length-1;i<ring.length;j=i++) if (onSegment(lng,lat,ring[j],ring[i])) return true;
+    return false;
+  }
+  function ringContains(lng,lat,ring) {
+    let inside=false;
+    for (let i=0,j=ring.length-1;i<ring.length;j=i++) {
+      const [xi,yi]=ring[i],[xj,yj]=ring[j];
+      if ((yi>lat)!==(yj>lat) && lng<(xj-xi)*(lat-yi)/(yj-yi)+xi) inside=!inside;
+    }
+    return inside;
+  }
+  function polygonContains(lng,lat,polygon) {
+    if (polygon.some(ring => ringBoundary(lng,lat,ring))) return true;
+    if (!ringContains(lng,lat,polygon[0])) return false;
+    return !polygon.slice(1).some(ring => ringContains(lng,lat,ring));
+  }
+  function buildIndex(collection, options) {
+    const idProperty=options.idProperty, cellSize=options.cellSize || .05;
+    if (!collection || collection.type!=='FeatureCollection' || !Array.isArray(collection.features)) throw Error('境界GeoJSONの形式が不正です。');
+    const components=[], features=new Map(), ids=new Set();
+    collection.features.forEach(feature => {
+      const id=feature && feature.properties && feature.properties[idProperty];
+      const geometry=feature && feature.geometry;
+      if (typeof id!=='string' || !geometry || !['Polygon','MultiPolygon'].includes(geometry.type) || !Array.isArray(geometry.coordinates)) throw Error(`境界地物の形式が不正です: ${id || 'IDなし'}`);
+      const polygons=geometry.type==='Polygon' ? [geometry.coordinates] : geometry.coordinates;
+      ids.add(id); features.set(id,feature);
+      polygons.forEach(polygon => {
+        if (!validPolygon(polygon)) throw Error(`境界polygonの形式が不正です: ${id}`);
+        components.push({id,bbox:bboxFor(polygon),polygon});
+      });
+    });
+    const grid=new Map();
+    components.forEach((component,index) => {
+      const [minLng,minLat,maxLng,maxLat]=component.bbox;
+      for(let y=Math.floor((minLat+90)/cellSize);y<=Math.floor((maxLat+90)/cellSize);y++)
+        for(let x=Math.floor((minLng+180)/cellSize);x<=Math.floor((maxLng+180)/cellSize);x++) {
+          const key=`${y}:${x}`, items=grid.get(key);
+          if (items) items.push(index); else grid.set(key,[index]);
+        }
+    });
+    const matches=(lat,lng) => {
+      if (!Number.isFinite(lat)||!Number.isFinite(lng)) return [];
+      const found=new Set(), key=`${Math.floor((lat+90)/cellSize)}:${Math.floor((lng+180)/cellSize)}`;
+      (grid.get(key)||[]).forEach(index => {
+        const component=components[index],[minLng,minLat,maxLng,maxLat]=component.bbox;
+        if(lng<minLng-EPSILON||lng>maxLng+EPSILON||lat<minLat-EPSILON||lat>maxLat+EPSILON) return;
+        if(polygonContains(lng,lat,component.polygon)) found.add(component.id);
+      });
+      return Array.from(found).sort();
+    };
+    return Object.freeze({
+      find:(lat,lng)=>matches(lat,lng)[0]||null, matches,
+      feature:id=>features.get(id)||null,
+      featureCollection:selectedIds=>({type:'FeatureCollection',features:(selectedIds||Array.from(ids)).map(id=>features.get(id)).filter(Boolean)}),
+      ids:()=>Array.from(ids), featureCount:ids.size, polygonCount:components.length
+    });
+  }
+  function bboxCandidates(lat,lng,items) {
+    if (!Number.isFinite(lat)||!Number.isFinite(lng)) return [];
+    return (items||[]).filter(item => item['有効']!==false
+      && lat>=Number(item.bbox_min_lat) && lat<=Number(item.bbox_max_lat)
+      && lng>=Number(item.bbox_min_lng) && lng<=Number(item.bbox_max_lng))
+      .map(item=>String(item.municipality_id)).sort();
+  }
+  window.GeoBoundary=Object.freeze({buildIndex,bboxCandidates,polygonContains});
+})();
+</script>

@@ -2,6 +2,11 @@
 (() => {
   'use strict';
   const state = {
+    mode: 'places', selectedBoundaryId:null, boundaryPoint:null, showBoundaryBboxes:false,
+    boundaries: {
+      municipality:{ status:'idle', index:null, geojson:null, error:null, version:'', sha256:'', promise:null },
+      base:{ status:'idle', index:null, geojson:null, error:null, version:'', sha256:'', promise:null }
+    },
     places: [], points: [], candidates: [], baseAreas: [], municipalities: [],
     selectedPlaceId: null, selectedPointId: null, selectedCandidateId: null,
     mapContextPlaceId: null, mapContextPointId: null,
@@ -43,6 +48,7 @@
       await new Promise(resolve => requestAnimationFrame(resolve));
       map.invalidateSize({ pan:false });
       fitData();
+      loadBoundary('municipality').then(() => { state.placeOrderCache.signature=null; renderLists(); }).catch(() => {});
     } catch (error) { showError(error); }
     finally { setBusy(false); }
   }
@@ -63,6 +69,10 @@
   }
 
   function renderLists() {
+    const boundaryMode = state.mode !== 'places';
+    $('placeModeList').hidden = boundaryMode;
+    $('boundaryModeList').hidden = !boundaryMode;
+    if (boundaryMode) return renderBoundaryList();
     const q = state.query.toLocaleLowerCase('ja');
     const pointNames = {};
     state.points.forEach(p => { (pointNames[p.place_id] ||= []).push(p['ポイント名']); });
@@ -88,11 +98,123 @@
   }
 
   function orderedPlaceRecords() {
-    const signature = GeoPlaceOrder.signature(state.places, state.points, state.baseAreas, state.municipalities);
+    const municipalityIndex = state.boundaries.municipality.index;
+    const signature = GeoPlaceOrder.signature(state.places, state.points, state.baseAreas, state.municipalities, municipalityIndex);
     if (state.placeOrderCache.signature !== signature) {
-      state.placeOrderCache = { signature, records:GeoPlaceOrder.orderPlaces(state.places, state.points, state.baseAreas, state.municipalities) };
+      state.placeOrderCache = { signature, records:GeoPlaceOrder.orderPlaces(state.places, state.points, state.baseAreas, state.municipalities, municipalityIndex) };
     }
     return state.placeOrderCache.records;
+  }
+
+  function boundaryKind() { return state.mode === 'bases' ? 'base' : 'municipality'; }
+  function boundaryMetadata(kind,id) {
+    return kind==='base'
+      ? state.baseAreas.find(item=>String(item.base_area_id)===String(id)) || null
+      : state.municipalities.find(item=>String(item.municipality_id)===String(id)) || null;
+  }
+  function boundaryName(kind,id) {
+    const item=boundaryMetadata(kind,id)||{};
+    return String(kind==='base' ? (item['基地名']||item.base_area_name||id) : (item['市町村表示名']||item['市町村正式名']||id));
+  }
+  async function loadBoundary(kind) {
+    const resource=state.boundaries[kind];
+    if (resource.status==='ready') return resource;
+    if (resource.promise) return resource.promise;
+    resource.status='loading'; resource.error=null;
+    if (state.mode!=='places') renderAll();
+    resource.promise=server('getGeoBoundary',kind).then(response=>{
+      const data=response.data;
+      resource.geojson=data.geojson; resource.version=data.version; resource.sha256=data.sha256;
+      resource.index=GeoBoundary.buildIndex(data.geojson,{idProperty:kind==='base'?'base_area_id':'municipality_id',cellSize:kind==='base'?.02:.05});
+      resource.status='ready'; resource.promise=null;
+      if (!state.selectedBoundaryId && kind===boundaryKind()) state.selectedBoundaryId=resource.index.ids()[0]||null;
+      if (kind==='municipality') state.placeOrderCache.signature=null;
+      renderAll();
+      return resource;
+    }).catch(error=>{
+      resource.status='error'; resource.error=error; resource.promise=null;
+      renderAll(); throw error;
+    });
+    return resource.promise;
+  }
+  function setMode(mode) {
+    if (mode===state.mode) return;
+    if (!canLeave()) return;
+    state.mode=mode; state.selectedBoundaryId=null; state.boundaryPoint=null;
+    ['Places','Bases','Municipalities'].forEach(name=>$(`mode${name}`).classList.toggle('active',mode===name.toLowerCase()));
+    renderAll(); resetRightPanelScroll();
+    if (mode==='places') { fitData(); return; }
+    Promise.allSettled([loadBoundary('base'),loadBoundary('municipality')]).then(()=>renderAll());
+  }
+  function renderBoundaryList() {
+    const kind=boundaryKind(), resource=state.boundaries[kind];
+    $('boundaryListTitle').textContent=kind==='base'?'基地エリア':'市町村境界';
+    $('boundaryStatus').innerHTML=resource.status==='loading'?'正式GeoJSONを読み込んでいます…'
+      :resource.status==='error'?`<span class="boundary-error">判定不可：${esc(resource.error.message||'取得に失敗しました')}</span>`
+      :resource.status==='ready'?`${resource.index.featureCount}件 · ${esc(resource.version)} · 参照のみ`:'読み込み前';
+    if (resource.status!=='ready') { $('boundaryList').innerHTML=''; return; }
+    $('boundaryList').innerHTML=resource.index.ids().map(id=>`<button class="list-item ${id===state.selectedBoundaryId?'active':''}" data-boundary="${esc(id)}"><span class="list-title">${esc(boundaryName(kind,id))}</span><span class="list-meta">${esc(id)}</span></button>`).join('');
+    $('boundaryList').querySelectorAll('[data-boundary]').forEach(el=>el.addEventListener('click',()=>selectBoundary(el.dataset.boundary)));
+  }
+  function selectBoundary(id) {
+    state.selectedBoundaryId=id; state.boundaryPoint=null; renderAll();
+    const feature=state.boundaries[boundaryKind()].index.feature(id);
+    if (feature) {
+      const layer=L.geoJSON(feature); const bounds=layer.getBounds();
+      if (bounds.isValid()) map.fitBounds(bounds,{padding:[35,35],maxZoom:15});
+    }
+  }
+  function renderBoundaryMap() {
+    const kind=boundaryKind(), resource=state.boundaries[kind];
+    if (resource.status!=='ready') return;
+    const selected=state.selectedBoundaryId;
+    L.geoJSON(resource.geojson,{
+      style:feature=>{
+        const id=feature.properties[kind==='base'?'base_area_id':'municipality_id'], active=id===selected;
+        return {color:active?'#1769e0':'#6c7f96',weight:active?3:1,opacity:active?1:.55,fillColor:kind==='base'?'#f79009':'#5b8def',fillOpacity:active?.18:.035};
+      },
+      onEachFeature:(feature,layer)=>{
+        const id=feature.properties[kind==='base'?'base_area_id':'municipality_id'];
+        layer.bindTooltip(boundaryName(kind,id));
+        layer.on('click',event=>{ if(event.originalEvent)L.DomEvent.stopPropagation(event.originalEvent); selectBoundary(id); inspectBoundaryPoint(event.latlng.lat,event.latlng.lng); });
+      }
+    }).addTo(layers);
+    if (state.showBoundaryBboxes && selected) {
+      const item=boundaryMetadata(kind,selected), feature=resource.index.feature(selected);
+      if (kind==='municipality' && item) L.rectangle([[Number(item.bbox_min_lat),Number(item.bbox_min_lng)],[Number(item.bbox_max_lat),Number(item.bbox_max_lng)]],{color:'#c72c41',weight:2,dashArray:'5 4',fill:false,interactive:false}).addTo(layers);
+      else if (feature) L.rectangle(L.geoJSON(feature).getBounds(),{color:'#c72c41',weight:2,dashArray:'5 4',fill:false,interactive:false}).addTo(layers);
+    }
+    state.places.filter(place=>place['有効']!==false).forEach(place=>{
+      const point=GeoPlaceOrder.representativePoint(place.place_id,state.points);
+      if (!point) return;
+      L.circleMarker([point['中心緯度'],point['中心経度']],{radius:3,color:'#172033',weight:1,fillOpacity:.7}).addTo(layers).bindTooltip(`登録地点: ${esc(place['地点名'])}`);
+    });
+    if (state.boundaryPoint) L.circleMarker([state.boundaryPoint.lat,state.boundaryPoint.lng],{radius:7,color:'#c72c41',weight:3,fillColor:'#fff',fillOpacity:1}).addTo(layers);
+  }
+  function inspectBoundaryPoint(lat,lng) {
+    const municipality=state.boundaries.municipality, base=state.boundaries.base;
+    state.boundaryPoint={lat,lng,
+      bbox:GeoBoundary.bboxCandidates(lat,lng,state.municipalities),
+      municipalities:municipality.index?municipality.index.matches(lat,lng):null,
+      bases:base.index?base.index.matches(lat,lng):null};
+    renderMap(); renderBoundaryEditor();
+  }
+  function renderBoundaryEditor() {
+    $('emptyEditor').hidden=true; $('placeEditor').hidden=true; $('pointEditor').hidden=true; $('candidateEditor').hidden=true;
+    const editor=$('boundaryEditor'), kind=boundaryKind(), resource=state.boundaries[kind], id=state.selectedBoundaryId, item=boundaryMetadata(kind,id)||{};
+    editor.hidden=false;
+    const status=resource.status==='ready'?'正式GeoJSON読込済み':resource.status==='error'?'判定不可':'読込中';
+    const p=state.boundaryPoint;
+    const labelIds=(ids,k)=>ids===null?'判定不可':ids.length?ids.map(value=>boundaryName(k,value)).join(' / '):'該当なし';
+    editor.innerHTML=`<div class="editor-header"><span class="readonly-badge">参照のみ</span><span class="eyebrow">BOUNDARY REFERENCE</span><h1>${esc(id?boundaryName(kind,id):(kind==='base'?'基地エリア':'市町村境界'))}</h1><p class="list-meta">${esc(status)}</p></div>
+      ${id?candidateRead(kind==='base'?'base_area_id':'municipality_id',id):''}
+      ${id&&kind==='municipality'?candidateRead('行政区域コード',item['行政区域コード']||'—'):''}
+      ${id?candidateRead('境界データID',item['境界データID']||'—'):''}
+      ${candidateRead('GeoJSON version',resource.version||'—')}${candidateRead('SHA-256',resource.sha256||'—')}
+      <label class="check boundary-toggle"><input id="boundaryBboxToggle" type="checkbox" ${state.showBoundaryBboxes?'checked':''}>bboxを地図に表示</label>
+      <div class="summary-card"><strong>任意地点の判定</strong><p>地図をクリックすると、Smart Loggerと同じPIP判定を実行します。境界線上は内側です。</p></div>
+      ${p?`${candidateRead('クリック座標',`${p.lat.toFixed(7)}, ${p.lng.toFixed(7)}`)}${candidateRead('基地Polygon',labelIds(p.bases,'base'))}${candidateRead('市町村bbox候補',p.bbox.length?p.bbox.map(value=>boundaryName('municipality',value)).join(' / '):'該当なし')}${candidateRead('市町村Polygon',labelIds(p.municipalities,'municipality'))}${candidateRead('最終市町村',p.municipalities===null?'判定不可':p.municipalities.length?boundaryName('municipality',p.municipalities[0]):'該当なし')}`:'<div class="field-help">地図上の確認したい位置をクリックしてください。</div>'}`;
+    $('boundaryBboxToggle').addEventListener('change',e=>{state.showBoundaryBboxes=e.target.checked;renderMap();});
   }
 
   function rememberListView(placeId, candidateId) {
@@ -103,6 +225,14 @@
   }
 
   function renderWorkspace() {
+    if (state.mode !== 'places') {
+      const baseMode=state.mode==='bases';
+      $('contextTitle').textContent=baseMode ? '基地エリアを確認' : '市町村境界を確認';
+      $('contextSummary').textContent='Smart Loggerの正式GeoJSONを参照しています。地図をクリックすると両方の境界判定を比較できます。';
+      updateMapHint();
+      requestAnimationFrame(() => map.invalidateSize({pan:false}));
+      return;
+    }
     if (state.draftPlace) {
       const count = state.draftPoints.filter(p => p['有効'] !== false).length;
       $('contextTitle').textContent = String(state.draftPlace['地点名'] || '新しい地点');
@@ -124,6 +254,7 @@
 
   function renderPointList() {
     const navigator = $('pointNavigator');
+    if (state.mode !== 'places') { navigator.hidden=true; navigator.innerHTML=''; return; }
     if (!state.draftPlace || state.mergeFlow) { navigator.hidden = true; navigator.innerHTML = ''; return; }
     navigator.hidden = false;
     const activePoints = state.draftPoints.filter(point => point['有効'] !== false).length;
@@ -142,6 +273,7 @@
 
   function renderMap() {
     layers.clearLayers();
+    if (state.mode !== 'places') return renderBoundaryMap();
     const activePlaceId = state.selectedPlaceId || state.mapContextPlaceId;
     const contextPoints = state.selectedPlaceId ? state.draftPoints : activePlaceId ? state.points.filter(p => p.place_id === activePlaceId) : [];
     const activePointId = state.selectedPointId || state.mapContextPointId;
@@ -324,6 +456,8 @@
   }
 
   function renderEditor() {
+    $('boundaryEditor').hidden = true;
+    if (state.mode !== 'places') return renderBoundaryEditor();
     $('emptyEditor').hidden = !!(state.draftPlace || state.selectedCandidateId);
     $('placeEditor').hidden = true;
     $('pointEditor').hidden = true;
@@ -786,6 +920,7 @@
   }
 
   map.on('click', event => {
+    if (state.mode !== 'places') { inspectBoundaryPoint(event.latlng.lat,event.latlng.lng); return; }
     if (state.placement === 'new-place') {
       const point = newPoint(event.latlng,1);
       point._temp_id = `temp-${Date.now()}`;
@@ -890,6 +1025,10 @@
   function markDirty() { setDirty(true); renderPointList(); renderMap(); renderGuide(); updateSaveState(); }
   function setDirty(value) { state.dirty = value; updateSaveState(); }
   function updateSaveState() {
+    if (state.mode !== 'places') {
+      $('saveState').textContent='参照のみ'; $('saveState').classList.remove('dirty');
+      $('saveBtn').disabled=true; $('discardBtn').disabled=true; return;
+    }
     const unsaved = hasUnsavedChanges();
     $('saveState').textContent = candidatePositionChanged() ? '登録予定位置が変更されています' : state.dirty ? '未保存の変更があります' : '保存済み';
     $('saveState').classList.toggle('dirty',unsaved);
@@ -943,7 +1082,8 @@
     });
   }
   function updateMapHint() {
-    if (state.placement === 'new-place') $('mapHint').textContent = '地図をクリックして最初の乗降位置を指定';
+    if (state.mode !== 'places') $('mapHint').textContent='地図上の任意地点をクリックして境界判定を確認';
+    else if (state.placement === 'new-place') $('mapHint').textContent = '地図をクリックして最初の乗降位置を指定';
     else if (state.placement === 'add-point') $('mapHint').textContent = '地図をクリックして新しい乗降位置を指定';
     else if (state.candidateDraft && state.candidateDraft.editing) $('mapHint').textContent = 'オレンジの候補マーカーをドラッグして登録予定位置を調整';
     else if (state.moveSession) $('mapHint').textContent = '青いマーカーをドラッグして位置を調整';
@@ -974,6 +1114,13 @@
   });
   document.querySelector('.left-panel').addEventListener('scroll', e => { state.listView.scrollTop=e.currentTarget.scrollTop; });
   $('newPlaceBtn').addEventListener('click',startNewPlace);
+  $('modePlaces').addEventListener('click',()=>setMode('places'));
+  $('modeBases').addEventListener('click',()=>setMode('bases'));
+  $('modeMunicipalities').addEventListener('click',()=>setMode('municipalities'));
+  $('retryBoundaryBtn').addEventListener('click',()=>{
+    const resource=state.boundaries[boundaryKind()]; resource.status='idle'; resource.error=null; resource.promise=null;
+    loadBoundary(boundaryKind()).catch(()=>{});
+  });
   $('saveBtn').addEventListener('click',save);
   $('discardBtn').addEventListener('click',discard);
   window.addEventListener('beforeunload', e => { if (hasUnsavedChanges()) { e.preventDefault(); e.returnValue=''; } });
