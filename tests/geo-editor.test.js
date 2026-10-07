@@ -601,9 +601,33 @@ test('候補の登録予定位置はクライアントdraftでのみ移動し候
 test('候補位置調整はpromoteとadd_pointだけregistration_positionへ渡す', () => {
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
   assert.match(client,/if \(action === 'promote' \|\| action === 'add_point'\) payload\.registration_position/);
-  assert.match(client,/function hasUnsavedChanges\(\) \{ return state\.dirty \|\| candidatePositionChanged\(\); \}/);
-  assert.match(client,/候補の登録予定位置が変更されています。変更を破棄して移動しますか？/);
+  assert.match(client,/function hasUnsavedChanges\(\) \{ return state\.dirty \|\| candidateDraftChanged\(\); \}/);
+  assert.match(client,/候補の登録予定位置または認識範囲が変更されています。変更を破棄して移動しますか？/);
   assert.match(client,/window\.addEventListener\('beforeunload',[\s\S]*?hasUnsavedChanges\(\)/);
+});
+
+test('候補の予定円と500m以内の既存point円を表示し異なる地点の重複だけ警告する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
+  assert.match(client,/const CANDIDATE_NEARBY_DISTANCE_M = 500/);
+  assert.match(client,/candidateCircle = L\.circle\(\[latitude,longitude\],[\s\S]*?radius:Number\(candidateDraft\.form\.radius\)/);
+  assert.match(client,/function candidateNearbyPoints\(point\)[\s\S]*?item\.distance <= CANDIDATE_NEARBY_DISTANCE_M \|\| item\.overlap > 0/);
+  assert.match(client,/const samePlace = !!point\.place_id && p\.place_id === point\.place_id/);
+  assert.match(client,/const conflicting = !samePlace && overlap > 0/);
+  assert.match(client,/同じ地点（重なり可）/);
+  assert.match(client,/異なる地点との重なり \$\{conflicts\.length\}件/);
+  assert.match(styles,/\.candidate-nearby-item\.overlap/);
+});
+
+test('候補ドラッグと半径入力は円・推奨値・重複表示へ即時反映し取消でdraftを復元する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/marker\.on\('drag', event => previewCandidateDrag\(event\.target\.getLatLng\(\),candidateCircle\)\)/);
+  assert.match(client,/function previewCandidateDrag\(latlng,circle\)[\s\S]*?circle\.setLatLng\(latlng\)[\s\S]*?updateCandidateProximity\(\)/);
+  assert.match(client,/candidate-radius'\)\.addEventListener\('input',[\s\S]*?renderMap\(\); updateCandidateProximity\(\); updateSaveState\(\)/);
+  assert.match(client,/推奨認識範囲：\$\{suggestion\.radius\}m \/ 現在設定：\$\{currentRadius\}m/);
+  assert.match(client,/draft\.form\.radius = draft\.moveSession\.radius/);
+  assert.match(client,/state\.candidateDraft = createCandidateDraft\(candidate\)/);
+  assert.doesNotMatch(client,/function recalculateCandidateRecommendation/);
 });
 
 test('候補promote前に有効基地または基地なしを選択して確認できる', () => {

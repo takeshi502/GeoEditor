@@ -20,6 +20,7 @@
   const $ = id => document.getElementById(id);
   const esc = value => String(value == null ? '' : value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
   const clone = value => JSON.parse(JSON.stringify(value));
+  const CANDIDATE_NEARBY_DISTANCE_M = 500;
   const map = L.map('map', { preferCanvas:true }).setView([26.30, 127.76], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom:19,
@@ -297,12 +298,33 @@
   function renderMap() {
     layers.clearLayers();
     if (state.mode !== 'places') return renderBoundaryMap();
+    const candidateMode = !!(state.selectedCandidateId && state.candidateDraft);
+    const candidatePoint = candidateMode ? candidateLocation() : null;
     const activePlaceId = state.selectedPlaceId || state.mapContextPlaceId;
     const contextPoints = state.selectedPlaceId ? state.draftPoints : activePlaceId ? state.points.filter(p => p.place_id === activePlaceId) : [];
     const activePointId = state.selectedPointId || state.mapContextPointId;
     const selectedCenter = contextPoints.find(p => p.point_id === activePointId || p._temp_id === activePointId) || contextPoints[0];
-    const allPoints = state.points.filter(p => p['有効'] !== false && isPlaceActive(p.place_id) && p.place_id !== activePlaceId).concat(contextPoints);
+    const allPoints = candidateMode
+      ? candidateNearbyPoints(candidatePoint).map(item => item.point)
+      : state.points.filter(p => p['有効'] !== false && isPlaceActive(p.place_id) && p.place_id !== activePlaceId).concat(contextPoints);
     allPoints.forEach(point => {
+      if (candidateMode) {
+        const pointDistance = distance(candidatePoint,point);
+        const samePlace = !!candidatePoint.place_id && point.place_id === candidatePoint.place_id;
+        const overlap = Number(candidatePoint['判定半径_m']) + Number(point['判定半径_m']) - pointDistance;
+        const conflicting = !samePlace && overlap > 0;
+        L.circle([point['中心緯度'], point['中心経度']], {
+          radius:Number(point['判定半径_m']), color:conflicting ? '#c2413b' : samePlace ? '#4f83cc' : '#7d8da4',
+          weight:conflicting ? 3 : 1.5, opacity:conflicting ? .9 : .5, fillOpacity:conflicting ? .11 : .025, interactive:false
+        }).addTo(layers);
+        const referenceMarker = L.circleMarker([point['中心緯度'], point['中心経度']], {
+          radius:conflicting ? 6 : 4, color:conflicting ? '#c2413b' : samePlace ? '#4f83cc' : '#52647a',
+          weight:conflicting ? 3 : 1, fillOpacity:.55, opacity:.8
+        }).addTo(layers);
+        referenceMarker.bindTooltip(`${esc(placeName(point.place_id))}<br>${esc(point['ポイント名'])}<br>半径 ${esc(point['判定半径_m'])}m · 候補から ${Math.round(pointDistance)}m${samePlace ? '<br>同じ地点（重なり可）' : conflicting ? `<br>約 ${Math.round(overlap * 10) / 10}m 重複` : ''}`);
+        referenceMarker.on('click', () => referenceMarker.openTooltip());
+        return;
+      }
       const inContext = point.place_id === activePlaceId || contextPoints.includes(point);
       const id = point.point_id || point._temp_id;
       const isActive = inContext && id === activePointId;
@@ -340,10 +362,19 @@
       const latitude = candidateDraft ? candidateDraft.latitude : Number(c['基準緯度']);
       const longitude = candidateDraft ? candidateDraft.longitude : Number(c['基準経度']);
       const size = selected ? 26 : 20;
+      let candidateCircle = null;
       if (selected && candidatePositionChanged()) {
         L.circleMarker([candidateDraft.originalLatitude, candidateDraft.originalLongitude], {
           radius:7, color:'#9b5b00', weight:2, dashArray:'3 3', fillOpacity:.08, opacity:.8, interactive:false
         }).addTo(layers).bindTooltip('元の候補位置');
+      }
+      if (selected && candidateDraft) {
+        const conflicts = overlapItems(candidateLocation());
+        candidateCircle = L.circle([latitude,longitude], {
+          radius:Number(candidateDraft.form.radius), color:conflicts.length ? '#c2413b' : '#e8790a',
+          weight:conflicts.length ? 4 : 3, opacity:1, fillColor:'#f79009', fillOpacity:conflicts.length ? .18 : .12,
+          interactive:false
+        }).addTo(layers);
       }
       const marker = L.marker([latitude, longitude], {
         draggable:!!(candidateDraft && candidateDraft.editing),
@@ -356,7 +387,10 @@
         markerElement.setAttribute('aria-label', `候補: ${c['候補名']}`);
       }
       marker.on('click', () => selectCandidate(c.candidate_id));
-      if (candidateDraft && candidateDraft.editing) marker.on('dragend', event => previewCandidatePosition(event.target.getLatLng()));
+      if (candidateDraft && candidateDraft.editing) {
+        marker.on('drag', event => previewCandidateDrag(event.target.getLatLng(),candidateCircle));
+        marker.on('dragend', event => previewCandidatePosition(event.target.getLatLng()));
+      }
       if (selected) marker.openTooltip();
     });
   }
@@ -451,9 +485,10 @@
     if (row) row.scrollIntoView({ block:'nearest' });
   }
   function focusCandidate(candidate) {
-    const contextPoints = state.mapContextPlaceId ? state.points.filter(p => p.place_id === state.mapContextPlaceId && p['有効'] !== false) : [];
     const draft = candidate.candidate_id === state.selectedCandidateId ? state.candidateDraft : null;
-    const coords = [[draft ? draft.latitude : candidate['基準緯度'],draft ? draft.longitude : candidate['基準経度']], ...contextPoints.map(p => [p['中心緯度'],p['中心経度']])];
+    const location = draft ? candidateLocation() : { '中心緯度':Number(candidate['基準緯度']), '中心経度':Number(candidate['基準経度']), '判定半径_m':50, place_id:null };
+    const nearby = draft ? candidateNearbyPoints(location).slice(0,12).map(item => item.point) : [];
+    const coords = [[location['中心緯度'],location['中心経度']], ...nearby.map(p => [p['中心緯度'],p['中心経度']])];
     if (coords.length > 1) map.fitBounds(L.latLngBounds(coords), { padding:[70,70], maxZoom:17 });
     else map.setView(coords[0],17);
   }
@@ -734,6 +769,7 @@
       candidateId:candidate.candidate_id,
       originalLatitude:location['中心緯度'], originalLongitude:location['中心経度'],
       latitude:location['中心緯度'], longitude:location['中心経度'], editing:false, moveSession:null,
+      initialRadius:suggestion.radius, initialAccuracy:suggestion.accuracy,
       promotionConfirm:false,
       form:{ placeName:String(candidate['候補名'] || ''), pointName:'', baseAreaId:inferredBaseArea ? inferredBaseArea.base_area_id : '', radius:suggestion.radius, accuracy:suggestion.accuracy, targetPlaceId:'', addAlias:true }
     };
@@ -744,16 +780,14 @@
     return !!draft && (Math.abs(draft.latitude-draft.originalLatitude)>1e-10 || Math.abs(draft.longitude-draft.originalLongitude)>1e-10);
   }
 
+  function candidateDraftChanged() {
+    const draft = state.candidateDraft;
+    return !!draft && (candidatePositionChanged() || Number(draft.form.radius) !== Number(draft.initialRadius) || Number(draft.form.accuracy) !== Number(draft.initialAccuracy));
+  }
+
   function candidateLocation() {
     const draft = state.candidateDraft;
     return { place_id:draft.form.targetPlaceId || null, '中心緯度':draft.latitude, '中心経度':draft.longitude, '判定半径_m':Number(draft.form.radius) };
-  }
-
-  function recalculateCandidateRecommendation() {
-    if (!state.candidateDraft) return;
-    const suggestion = suggest(candidateLocation());
-    state.candidateDraft.form.radius = suggestion.radius;
-    state.candidateDraft.form.accuracy = suggestion.accuracy;
   }
 
   function startCandidateMove() {
@@ -772,8 +806,17 @@
     if (!draft || !draft.editing) return;
     draft.latitude = Number(latlng.lat);
     draft.longitude = Number(latlng.lng);
-    recalculateCandidateRecommendation();
     renderAll();
+    updateSaveState();
+  }
+
+  function previewCandidateDrag(latlng,circle) {
+    const draft = state.candidateDraft;
+    if (!draft || !draft.editing) return;
+    draft.latitude = Number(latlng.lat);
+    draft.longitude = Number(latlng.lng);
+    if (circle) circle.setLatLng(latlng);
+    updateCandidateProximity();
     updateSaveState();
   }
 
@@ -793,7 +836,6 @@
     draft.longitude = draft.originalLongitude;
     draft.editing = false;
     draft.moveSession = null;
-    recalculateCandidateRecommendation();
     renderAll();
     updateSaveState();
     const candidate = state.candidates.find(item => item.candidate_id === draft.candidateId);
@@ -821,7 +863,6 @@
     if (!state.candidateDraft || state.candidateDraft.candidateId !== c.candidate_id) state.candidateDraft = createCandidateDraft(c);
     const draft = state.candidateDraft;
     const location = candidateLocation();
-    const suggestion = suggest(location);
     const movedMeters = distance(
       { '中心緯度':draft.originalLatitude, '中心経度':draft.originalLongitude },
       { '中心緯度':draft.latitude, '中心経度':draft.longitude }
@@ -837,10 +878,11 @@
     }).sort((a,b) => a.distance-b.distance || String(a.place['地点名']).localeCompare(String(b.place['地点名']),'ja'))
       .map(item => `<option value="${esc(item.place.place_id)}" ${item.place.place_id === draft.form.targetPlaceId ? 'selected' : ''}>${esc(item.place['地点名'])}${Number.isFinite(item.distance) ? `（${Math.round(item.distance)}m）` : ''}</option>`).join('');
     const newRegistration = draft.promotionConfirm
-      ? `<div class="candidate-actions"><h3>新しい地点として登録</h3><div class="summary-card promotion-confirm"><strong>登録内容を確認</strong><div class="confirm-grid"><span>地点名</span><b>${esc(draft.form.placeName || '—')}</b><span>所属基地</span><b>${esc(selectedBaseArea ? selectedBaseArea['基地名'] : '基地なし')}</b><span>登録予定位置</span><b>${candidatePositionChanged() ? `調整済み（元位置から約 ${Math.round(movedMeters)}m）` : '候補位置を使用'}</b><span>乗降位置名</span><b>${esc(draft.form.pointName || '—')}</b><span>認識範囲</span><b>${esc(draft.form.radius)}m</b></div><div class="button-row"><button id="cancelPromoteCandidate" type="button">キャンセル</button><button id="confirmPromoteCandidate" type="button" class="primary">この内容で登録</button></div></div></div>`
+      ? `<div class="candidate-actions"><h3>新しい地点として登録</h3><div class="summary-card promotion-confirm"><strong>登録内容を確認</strong><div class="confirm-grid"><span>地点名</span><b>${esc(draft.form.placeName || '—')}</b><span>所属基地</span><b>${esc(selectedBaseArea ? selectedBaseArea['基地名'] : '基地なし')}</b><span>登録予定位置</span><b>${candidatePositionChanged() ? `調整済み（元位置から約 ${Math.round(movedMeters)}m）` : '候補位置を使用'}</b><span>乗降位置名</span><b>${esc(draft.form.pointName || '—')}</b><span>認識範囲</span><b>${esc(draft.form.radius)}m</b></div>${overlaps.length ? `<div class="warning critical">異なる地点の認識範囲と ${overlaps.length}件重なっています。地図と一覧を確認してください。</div>` : '<div class="field-help">異なる地点との認識範囲重複はありません。</div>'}<div class="button-row"><button id="cancelPromoteCandidate" type="button">キャンセル</button><button id="confirmPromoteCandidate" type="button" class="primary">この内容で登録</button></div></div></div>`
       : `<div class="candidate-actions"><h3>① 新しい地点として登録</h3>${field('地点名','candidate-place-name',draft.form.placeName)}<div class="field"><label for="candidate-base">所属基地</label><select id="candidate-base">${baseOptions}</select><div class="field-help">候補の推定基地を初期表示します。必要に応じて変更してください。</div></div>${field('最初の乗降位置名','candidate-point-name',draft.form.pointName,'text',null,'例：正面入口、乗車場所')}
       <div class="field row">${field('認識範囲（m）','candidate-radius',draft.form.radius,'number','1')}${field('GPS許容誤差（m）','candidate-accuracy',draft.form.accuracy,'number','1')}</div>
-      <div id="candidate-suggestion" class="warning ${suggestion.density === 'critical' ? 'critical' : ''}">現在の登録予定位置での推奨：認識範囲 ${suggestion.radius}m / GPS許容誤差 ${suggestion.accuracy}m${overlaps.length ? `<br>異なる地点との重なり ${overlaps.length}件` : ''}</div>
+      <div class="field-help">現在設定している認識範囲をオレンジの円で表示します。推奨値は自動適用されません。</div>
+      <div id="candidate-proximity">${candidateProximityHtml(location)}</div>
       <button id="promoteCandidate" class="primary">新しい地点として登録</button>
       <h3>既存地点へ整理</h3><div class="field"><label>まとめ先の地点</label><select id="candidate-target"><option value="">選択してください</option>${options}</select></div>
       <label class="check"><input id="candidate-alias" type="checkbox" ${draft.form.addAlias ? 'checked' : ''}>候補名を別名へ追加</label>
@@ -874,13 +916,13 @@
       $('candidate-place-name').addEventListener('input', e => { draft.form.placeName = e.target.value; });
       $('candidate-base').addEventListener('change', e => { draft.form.baseAreaId = e.target.value; });
       $('candidate-point-name').addEventListener('input', e => { draft.form.pointName = e.target.value; });
-      $('candidate-radius').addEventListener('input', e => { draft.form.radius = Number(e.target.value); });
-      $('candidate-accuracy').addEventListener('input', e => { draft.form.accuracy = Number(e.target.value); });
+      $('candidate-radius').addEventListener('input', e => { draft.form.radius = Number(e.target.value); renderMap(); updateCandidateProximity(); updateSaveState(); });
+      $('candidate-accuracy').addEventListener('input', e => { draft.form.accuracy = Number(e.target.value); updateSaveState(); });
       $('candidate-alias').addEventListener('change', e => { draft.form.addAlias = e.target.checked; });
       $('candidate-target').addEventListener('change', e => {
         draft.form.targetPlaceId = e.target.value;
-        recalculateCandidateRecommendation();
         renderCandidateEditor();
+        renderMap();
       });
     }
   }
@@ -1020,7 +1062,13 @@
   }
   function discard() {
     if (state.selectedCandidateId && state.candidateDraft) {
-      restoreCandidateOriginal();
+      const candidate = state.candidates.find(item => item.candidate_id === state.selectedCandidateId);
+      if (candidate) {
+        state.candidateDraft = createCandidateDraft(candidate);
+        setDirty(false);
+        renderAll();
+        focusCandidate(candidate);
+      }
       return;
     }
     if (!state.original || !state.draftPlace || !state.draftPlace.place_id) {
@@ -1037,11 +1085,11 @@
     setDirty(false);
     renderAll();
   }
-  function hasUnsavedChanges() { return state.dirty || candidatePositionChanged(); }
+  function hasUnsavedChanges() { return state.dirty || candidateDraftChanged(); }
   function canLeave() {
     if (!hasUnsavedChanges()) return true;
-    const message = candidatePositionChanged()
-      ? '候補の登録予定位置が変更されています。変更を破棄して移動しますか？'
+    const message = candidateDraftChanged()
+      ? '候補の登録予定位置または認識範囲が変更されています。変更を破棄して移動しますか？'
       : '未保存の変更があります。変更を破棄して移動しますか？';
     return confirm(message);
   }
@@ -1053,7 +1101,7 @@
       $('saveBtn').disabled=true; $('discardBtn').disabled=true; return;
     }
     const unsaved = hasUnsavedChanges();
-    $('saveState').textContent = candidatePositionChanged() ? '登録予定位置が変更されています' : state.dirty ? '未保存の変更があります' : '保存済み';
+    $('saveState').textContent = candidateDraftChanged() ? '登録予定位置または認識範囲が変更されています' : state.dirty ? '未保存の変更があります' : '保存済み';
     $('saveState').classList.toggle('dirty',unsaved);
     $('saveBtn').disabled = !state.dirty || !state.draftPlace;
     $('discardBtn').disabled = !unsaved;
@@ -1083,6 +1131,31 @@
     const raw = others.length ? Math.min(50,...others.map(p => distance(point,p)-Number(p['判定半径_m'])-5)) : 50;
     const radius = Math.max(5,Math.floor(raw/5)*5);
     return { radius, accuracy:Math.min(50,radius), density:radius<=15?'critical':radius<20?'warning':'normal' };
+  }
+  function candidateNearbyPoints(point) {
+    return state.points.filter(p => p['有効'] !== false && isPlaceActive(p.place_id))
+      .map(p => {
+        const pointDistance = distance(point,p);
+        const samePlace = !!point.place_id && p.place_id === point.place_id;
+        const overlap = Number(point['判定半径_m']) + Number(p['判定半径_m']) - pointDistance;
+        return { point:p, distance:pointDistance, overlap, samePlace };
+      })
+      .filter(item => item.distance <= CANDIDATE_NEARBY_DISTANCE_M || item.overlap > 0)
+      .sort((a,b) => a.distance-b.distance || String(a.point.point_id).localeCompare(String(b.point.point_id)));
+  }
+  function candidateProximityHtml(point) {
+    const suggestion = suggest(point);
+    const nearby = candidateNearbyPoints(point).slice(0,12);
+    const conflicts = nearby.filter(item => !item.samePlace && item.overlap > 0);
+    const currentRadius = Number(point['判定半径_m']);
+    const exceeds = currentRadius > suggestion.radius;
+    const critical = conflicts.length || suggestion.density === 'critical' || exceeds;
+    const rows = nearby.map(item => `<div class="candidate-nearby-item ${!item.samePlace && item.overlap > 0 ? 'overlap' : ''}"><strong>${esc(placeName(item.point.place_id))} / ${esc(item.point['ポイント名'])}</strong><span>半径 ${esc(item.point['判定半径_m'])}m · 候補から ${Math.round(item.distance)}m${item.samePlace ? ' · 同じ地点（重なり可）' : item.overlap > 0 ? ` · 約 ${Math.round(item.overlap * 10) / 10}m重複` : ''}</span></div>`).join('');
+    return `<div id="candidate-suggestion" class="warning ${critical ? 'critical' : ''}">推奨認識範囲：${suggestion.radius}m / 現在設定：${currentRadius}m / GPS許容誤差推奨：${suggestion.accuracy}m${suggestion.density !== 'normal' ? '<br>周辺が密集しています。位置と半径を慎重に確認してください。' : ''}${exceeds ? '<br>現在設定は推奨認識範囲を超えています。' : ''}${conflicts.length ? `<br>異なる地点との重なり ${conflicts.length}件` : ''}</div><h3>近接する登録地点の認識範囲</h3><div class="candidate-nearby-list">${rows || '<div class="field-help">500m以内に登録地点の乗降位置はありません。</div>'}</div>`;
+  }
+  function updateCandidateProximity() {
+    const container = $('candidate-proximity');
+    if (container && state.candidateDraft) container.innerHTML = candidateProximityHtml(candidateLocation());
   }
   function overlapItems(point) {
     return state.points.filter(p => p['有効'] !== false && p.place_id !== point.place_id)
