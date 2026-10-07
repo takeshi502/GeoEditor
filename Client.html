@@ -14,6 +14,7 @@
     dirty: false, placement: null, addFlowPointId: null, dragPointId: null,
     moveSession: null, mergeFlow: null, query: '',
     placeOrderCache: { signature:null, records:[] },
+    expandedPlaceGroups: new Set(),
     listView: { scrollTop:0, lastPlaceId:null, lastCandidateId:null }
   };
   const $ = id => document.getElementById(id);
@@ -78,16 +79,30 @@
     state.points.forEach(p => { (pointNames[p.place_id] ||= []).push(p['ポイント名']); });
     const placeRecords = orderedPlaceRecords().filter(record => [record.place['地点名'], record.place['別名'], ...(pointNames[record.place.place_id] || [])].join(' ').toLocaleLowerCase('ja').includes(q));
     $('placeCount').textContent = `${placeRecords.length}件`;
-    let previousGroupKey = null;
-    $('placeList').innerHTML = placeRecords.map(record => {
-      const p = record.place;
-      const count = state.points.filter(point => point.place_id === p.place_id && point['有効'] !== false).length;
-      const active = state.mergeFlow && p.place_id === state.mergeFlow.targetPlaceId ? 'merge-target' : p.place_id === state.selectedPlaceId ? 'active' : '';
-      const recent = !state.selectedPlaceId && p.place_id === state.listView.lastPlaceId ? 'recent' : '';
-      const heading = record.groupLabel && record.groupKey !== previousGroupKey ? `<div class="place-group-label">${esc(record.groupLabel)}</div>` : '';
-      previousGroupKey = record.groupKey;
-      return `${heading}<button class="list-item ${active} ${recent}" data-place="${esc(p.place_id)}"><span class="list-title">${esc(p['地点名'])}</span><span class="list-meta">乗降位置 ${count}か所 · ${esc(p['別名'] || p.place_id)}</span></button>`;
+    const groups = [];
+    placeRecords.forEach(record => {
+      let group = groups[groups.length - 1];
+      if (!group || group.key !== record.groupKey) {
+        group = { key:record.groupKey, label:record.groupLabel, records:[] };
+        groups.push(group);
+      }
+      group.records.push(record);
+    });
+    const searching = Boolean(q.trim());
+    $('placeList').innerHTML = groups.map(group => {
+      const expanded = searching || state.expandedPlaceGroups.has(group.key);
+      const heading = `<button type="button" class="place-group-label" data-place-group="${esc(group.key)}" aria-expanded="${expanded}"><span class="place-group-chevron" aria-hidden="true">${expanded ? '▼' : '▶'}</span><span>${esc(group.label)}</span><span class="place-group-count">${group.records.length}件</span></button>`;
+      if (!expanded) return heading;
+      const items = group.records.map(record => {
+        const p = record.place;
+        const count = state.points.filter(point => point.place_id === p.place_id && point['有効'] !== false).length;
+        const active = state.mergeFlow && p.place_id === state.mergeFlow.targetPlaceId ? 'merge-target' : p.place_id === state.selectedPlaceId ? 'active' : '';
+        const recent = !state.selectedPlaceId && p.place_id === state.listView.lastPlaceId ? 'recent' : '';
+        return `<button class="list-item ${active} ${recent}" data-place="${esc(p.place_id)}"><span class="list-title">${esc(p['地点名'])}</span><span class="list-meta">乗降位置 ${count}か所 · ${esc(p['別名'] || p.place_id)}</span></button>`;
+      }).join('');
+      return `${heading}<div class="place-group-items">${items}</div>`;
     }).join('') || '<div class="list-meta">該当なし</div>';
+    $('placeList').querySelectorAll('[data-place-group]').forEach(el => el.addEventListener('click', () => togglePlaceGroup(el.dataset.placeGroup)));
     $('placeList').querySelectorAll('[data-place]').forEach(el => el.addEventListener('click', () => state.mergeFlow ? chooseMergeTarget(el.dataset.place) : selectPlace(el.dataset.place)));
 
     const candidates = state.candidates.filter(c => !['promoted','merged','rejected'].includes(c['候補状態']) && String(c['候補名']).toLocaleLowerCase('ja').includes(q));
@@ -95,6 +110,14 @@
     $('candidateList').innerHTML = candidates.map(c => `<button class="list-item ${c.candidate_id === state.selectedCandidateId ? 'active' : ''} ${!state.selectedCandidateId && c.candidate_id === state.listView.lastCandidateId ? 'recent' : ''}" data-candidate="${esc(c.candidate_id)}"><span class="list-title">${esc(c['候補名'])}</span><span class="list-meta">確認 ${esc(c['確認回数'])}回 · ${esc(c['候補状態'])}</span></button>`).join('') || '<div class="list-meta">未処理候補なし</div>';
     $('candidateList').querySelectorAll('[data-candidate]').forEach(el => el.addEventListener('click', () => selectCandidate(el.dataset.candidate)));
     requestAnimationFrame(() => { document.querySelector('.left-panel').scrollTop = state.listView.scrollTop; });
+  }
+
+  function togglePlaceGroup(groupKey) {
+    const panel = document.querySelector('.left-panel');
+    if (panel) state.listView.scrollTop = panel.scrollTop;
+    if (state.expandedPlaceGroups.has(groupKey)) state.expandedPlaceGroups.delete(groupKey);
+    else state.expandedPlaceGroups.add(groupKey);
+    renderLists();
   }
 
   function orderedPlaceRecords() {

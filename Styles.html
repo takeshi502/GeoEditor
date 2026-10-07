@@ -57,7 +57,12 @@
   .list-item:hover,.list-item.active { background:#eef5ff; border-color:#c8dcfb; }
   .list-item.recent { background:#f5f8fd; border-color:#b8c8df; box-shadow:inset 3px 0 0 #6f8fb9; }
   .list-item.merge-target { background:#e9f8f2; border-color:#8dd5bd; }
-  .place-group-label { margin:14px 8px 4px; padding:0 2px 6px; color:#43546a; border-bottom:1px solid #d9e1eb; font-size:16px; line-height:1.35; font-weight:800; letter-spacing:.025em; }
+  .place-group-label { width:100%; margin:10px 0 2px; padding:10px 8px; display:grid; grid-template-columns:18px minmax(0,1fr) auto; align-items:center; gap:6px; text-align:left; color:#43546a; background:#f6f8fb; border:1px solid transparent; border-bottom-color:#d9e1eb; border-radius:8px; font-size:16px; line-height:1.35; font-weight:800; letter-spacing:.025em; cursor:pointer; }
+  .place-group-label:hover { background:#edf3fa; border-color:#cad6e5; }
+  .place-group-label:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+  .place-group-chevron { color:#64748b; font-size:12px; }
+  .place-group-count { color:var(--muted); font-size:11px; font-weight:700; letter-spacing:0; }
+  .place-group-items { display:flex; flex-direction:column; gap:4px; }
   .list-title { font-weight:700; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .list-meta { font-size:11px; color:var(--muted); display:block; margin-top:3px; }
   .boundary-status { margin:0 2px 12px; padding:9px 10px; border-radius:8px; background:#f4f7fa; color:var(--muted); font-size:11px; line-height:1.5; }

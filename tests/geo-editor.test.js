@@ -663,9 +663,14 @@ test('地点一覧は安定した空間順をキャッシュし、常設中も�
   assert.match(client,/placeOrderCache: \{ signature:null, records:\[\] \}/);
   assert.match(client,/GeoPlaceOrder\.signature\(state\.places, state\.points, state\.baseAreas, state\.municipalities, municipalityIndex\)/);
   assert.match(client,/GeoPlaceOrder\.orderPlaces\(state\.places, state\.points, state\.baseAreas, state\.municipalities, municipalityIndex\)/);
-  assert.match(styles,/\.place-group-label[^}]*font-size:16px/);
+  assert.match(styles,/\.place-group-label[^}]*width:100%[^}]*font-size:16px/);
   assert.match(client,/const placeRecords = orderedPlaceRecords\(\)\.filter/);
-  assert.match(client,/const heading = record\.groupLabel && record\.groupKey !== previousGroupKey/);
+  assert.match(client,/expandedPlaceGroups: new Set\(\)/);
+  assert.match(client,/const expanded = searching \|\| state\.expandedPlaceGroups\.has\(group\.key\)/);
+  assert.match(client,/data-place-group="\$\{esc\(group\.key\)\}" aria-expanded="\$\{expanded\}"/);
+  assert.match(client,/expanded \? '▼' : '▶'/);
+  assert.match(client,/function togglePlaceGroup\(groupKey\)[\s\S]*?state\.expandedPlaceGroups\.delete\(groupKey\)[\s\S]*?state\.expandedPlaceGroups\.add\(groupKey\)[\s\S]*?renderLists\(\)/);
+  assert.match(client,/const searching = Boolean\(q\.trim\(\)\)/);
   assert.match(client,/state\.municipalities = response\.data\.municipalities/);
   assert.match(client,/listView: \{ scrollTop:0, lastPlaceId:null, lastCandidateId:null \}/);
   assert.match(client,/state\.listView\.scrollTop = panel\.scrollTop/);
@@ -673,6 +678,22 @@ test('地点一覧は安定した空間順をキャッシュし、常設中も�
   assert.match(client,/left-panel'\)\.addEventListener\('scroll'/);
   assert.match(client,/state\.query=e\.target\.value/);
   assert.match(styles,/\.list-item\.recent/);
+});
+
+test('基地・市町村グループは初期全閉で複数展開でき、検索中だけ該当グループを自動展開する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
+  assert.match(client,/expandedPlaceGroups: new Set\(\)/);
+  assert.match(client,/const searching = Boolean\(q\.trim\(\)\)/);
+  assert.match(client,/const expanded = searching \|\| state\.expandedPlaceGroups\.has\(group\.key\)/);
+  assert.match(client,/if \(!expanded\) return heading/);
+  assert.match(client,/aria-expanded="\$\{expanded\}"/);
+  assert.match(client,/expanded \? '▼' : '▶'/);
+  assert.match(client,/state\.expandedPlaceGroups\.has\(groupKey\)[\s\S]*?delete\(groupKey\)[\s\S]*?add\(groupKey\)/);
+  assert.doesNotMatch(client,/expandedPlaceGroups\s*=\s*new Set/);
+  assert.match(client,/if \(panel\) state\.listView\.scrollTop = panel\.scrollTop;[\s\S]*?renderLists\(\)/);
+  assert.match(styles,/\.place-group-label[^}]*width:100%[^}]*cursor:pointer/);
+  assert.match(styles,/\.place-group-items[^}]*display:flex/);
 });
 
 test('全乗降位置を常時一覧表示し、一覧と地図は共通のpoint選択処理を使う', () => {
