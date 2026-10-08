@@ -4,8 +4,8 @@
   const state = {
     mode: 'places', selectedBoundaryId:null, boundaryPoint:null, showBoundaryBboxes:false,
     boundaries: {
-      municipality:{ status:'idle', index:null, geojson:null, error:null, version:'', sha256:'', promise:null },
-      base:{ status:'idle', index:null, geojson:null, error:null, version:'', sha256:'', promise:null }
+      municipality:{ status:'idle', index:null, geojson:null, error:null, version:'', sha256:'', promise:null, generation:0 },
+      base:{ status:'idle', index:null, geojson:null, error:null, version:'', sha256:'', promise:null, generation:0 }
     },
     places: [], points: [], candidates: [], baseAreas: [], municipalities: [],
     selectedPlaceId: null, selectedPointId: null, selectedCandidateId: null,
@@ -46,11 +46,12 @@
       state.candidates = response.data.candidates;
       state.baseAreas = response.data.base_areas;
       state.municipalities = response.data.municipalities;
+      const municipalityReady = loadBoundary('municipality');
       renderAll();
       await new Promise(resolve => requestAnimationFrame(resolve));
       map.invalidateSize({ pan:false });
       fitData();
-      loadBoundary('municipality').then(() => { state.placeOrderCache.signature=null; renderLists(); }).catch(() => {});
+      await municipalityReady.catch(() => {});
     } catch (error) { showError(error); }
     finally { setBusy(false); }
   }
@@ -78,33 +79,43 @@
     const q = state.query.toLocaleLowerCase('ja');
     const pointNames = {};
     state.points.forEach(p => { (pointNames[p.place_id] ||= []).push(p['ポイント名']); });
-    const placeRecords = orderedPlaceRecords().filter(record => [record.place['地点名'], record.place['別名'], ...(pointNames[record.place.place_id] || [])].join(' ').toLocaleLowerCase('ja').includes(q));
-    $('placeCount').textContent = `${placeRecords.length}件`;
-    const groups = [];
-    placeRecords.forEach(record => {
-      let group = groups[groups.length - 1];
-      if (!group || group.key !== record.groupKey) {
-        group = { key:record.groupKey, label:record.groupLabel, records:[] };
-        groups.push(group);
-      }
-      group.records.push(record);
-    });
-    const searching = Boolean(q.trim());
-    $('placeList').innerHTML = groups.map(group => {
-      const expanded = searching || state.expandedPlaceGroups.has(group.key);
-      const heading = `<button type="button" class="place-group-label" data-place-group="${esc(group.key)}" aria-expanded="${expanded}"><span class="place-group-chevron" aria-hidden="true">${expanded ? '▼' : '▶'}</span><span>${esc(group.label)}</span><span class="place-group-count">${group.records.length}件</span></button>`;
-      if (!expanded) return heading;
-      const items = group.records.map(record => {
-        const p = record.place;
-        const count = state.points.filter(point => point.place_id === p.place_id && point['有効'] !== false).length;
-        const active = state.mergeFlow && p.place_id === state.mergeFlow.targetPlaceId ? 'merge-target' : p.place_id === state.selectedPlaceId ? 'active' : '';
-        const recent = !state.selectedPlaceId && p.place_id === state.listView.lastPlaceId ? 'recent' : '';
-        return `<button class="list-item ${active} ${recent}" data-place="${esc(p.place_id)}"><span class="list-title">${esc(p['地点名'])}</span><span class="list-meta">乗降位置 ${count}か所 · ${esc(p['別名'] || p.place_id)}</span></button>`;
-      }).join('');
-      return `${heading}<div class="place-group-items">${items}</div>`;
-    }).join('') || '<div class="list-meta">該当なし</div>';
-    $('placeList').querySelectorAll('[data-place-group]').forEach(el => el.addEventListener('click', () => togglePlaceGroup(el.dataset.placeGroup)));
-    $('placeList').querySelectorAll('[data-place]').forEach(el => el.addEventListener('click', () => state.mergeFlow ? chooseMergeTarget(el.dataset.place) : selectPlace(el.dataset.place)));
+    const matchingPlaces = state.places.filter(place => place['有効'] !== false && [place['地点名'], place['別名'], ...(pointNames[place.place_id] || [])].join(' ').toLocaleLowerCase('ja').includes(q));
+    const matchingPlaceIds = new Set(matchingPlaces.map(place => place.place_id));
+    $('placeCount').textContent = `${matchingPlaces.length}件`;
+    const municipalityResource = state.boundaries.municipality;
+    if (municipalityResource.status !== 'ready') {
+      $('placeList').innerHTML = municipalityResource.status === 'error'
+        ? `<div class="place-list-state error"><strong>市町村境界を読み込めませんでした</strong><span>${esc(municipalityResource.error && municipalityResource.error.message || '取得に失敗しました')}</span><button type="button" id="retryMunicipalityBtn" class="secondary compact">再試行</button></div>`
+        : '<div class="place-list-state loading"><span class="loading-dot" aria-hidden="true"></span><strong>市町村を判定中…</strong><span>正式な境界データを準備しています</span></div>';
+      if ($('retryMunicipalityBtn')) $('retryMunicipalityBtn').addEventListener('click', retryMunicipalityBoundary);
+    } else {
+      const placeRecords = orderedPlaceRecords().filter(record => matchingPlaceIds.has(record.place.place_id));
+      const groups = [];
+      placeRecords.forEach(record => {
+        let group = groups[groups.length - 1];
+        if (!group || group.key !== record.groupKey) {
+          group = { key:record.groupKey, label:record.groupLabel, records:[] };
+          groups.push(group);
+        }
+        group.records.push(record);
+      });
+      const searching = Boolean(q.trim());
+      $('placeList').innerHTML = groups.map(group => {
+        const expanded = searching || state.expandedPlaceGroups.has(group.key);
+        const heading = `<button type="button" class="place-group-label" data-place-group="${esc(group.key)}" aria-expanded="${expanded}"><span class="place-group-chevron" aria-hidden="true">${expanded ? '▼' : '▶'}</span><span>${esc(group.label)}</span><span class="place-group-count">${group.records.length}件</span></button>`;
+        if (!expanded) return heading;
+        const items = group.records.map(record => {
+          const p = record.place;
+          const count = state.points.filter(point => point.place_id === p.place_id && point['有効'] !== false).length;
+          const active = state.mergeFlow && p.place_id === state.mergeFlow.targetPlaceId ? 'merge-target' : p.place_id === state.selectedPlaceId ? 'active' : '';
+          const recent = !state.selectedPlaceId && p.place_id === state.listView.lastPlaceId ? 'recent' : '';
+          return `<button class="list-item ${active} ${recent}" data-place="${esc(p.place_id)}"><span class="list-title">${esc(p['地点名'])}</span><span class="list-meta">乗降位置 ${count}か所 · ${esc(p['別名'] || p.place_id)}</span></button>`;
+        }).join('');
+        return `${heading}<div class="place-group-items">${items}</div>`;
+      }).join('') || '<div class="list-meta">該当なし</div>';
+      $('placeList').querySelectorAll('[data-place-group]').forEach(el => el.addEventListener('click', () => togglePlaceGroup(el.dataset.placeGroup)));
+      $('placeList').querySelectorAll('[data-place]').forEach(el => el.addEventListener('click', () => state.mergeFlow ? chooseMergeTarget(el.dataset.place) : selectPlace(el.dataset.place)));
+    }
 
     const candidates = state.candidates.filter(c => !['promoted','merged','rejected'].includes(c['候補状態']) && String(c['候補名']).toLocaleLowerCase('ja').includes(q));
     $('candidateCount').textContent = `${candidates.length}件`;
@@ -144,9 +155,11 @@
     const resource=state.boundaries[kind];
     if (resource.status==='ready') return resource;
     if (resource.promise) return resource.promise;
+    const generation=++resource.generation;
     resource.status='loading'; resource.error=null;
     if (state.mode!=='places') renderAll();
     resource.promise=server('getGeoBoundary',kind).then(response=>{
+      if (generation!==resource.generation) return resource;
       const data=response.data;
       resource.geojson=data.geojson; resource.version=data.version; resource.sha256=data.sha256;
       resource.index=GeoBoundary.buildIndex(data.geojson,{idProperty:kind==='base'?'base_area_id':'municipality_id',cellSize:kind==='base'?.02:.05});
@@ -156,10 +169,20 @@
       renderAll();
       return resource;
     }).catch(error=>{
+      if (generation!==resource.generation) return resource;
       resource.status='error'; resource.error=error; resource.promise=null;
       renderAll(); throw error;
     });
     return resource.promise;
+  }
+  function retryMunicipalityBoundary() {
+    const resource=state.boundaries.municipality;
+    resource.generation+=1;
+    resource.status='idle'; resource.index=null; resource.geojson=null; resource.error=null; resource.promise=null;
+    state.placeOrderCache.signature=null;
+    const promise=loadBoundary('municipality');
+    renderLists();
+    promise.catch(()=>{});
   }
   function setMode(mode) {
     if (mode===state.mode) return;

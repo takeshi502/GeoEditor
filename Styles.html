@@ -67,6 +67,12 @@
   .list-meta { font-size:11px; color:var(--muted); display:block; margin-top:3px; }
   .boundary-status { margin:0 2px 12px; padding:9px 10px; border-radius:8px; background:#f4f7fa; color:var(--muted); font-size:11px; line-height:1.5; }
   .boundary-error { color:var(--danger); font-weight:700; }
+  .place-list-state { min-height:108px; padding:20px 14px; border:1px solid var(--line); border-radius:12px; background:#f8fafc; color:var(--muted); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; text-align:center; }
+  .place-list-state strong { color:var(--ink); font-size:15px; }
+  .place-list-state.error { border-color:#f3b8c0; background:#fff7f8; }
+  .place-list-state.error strong { color:var(--danger); }
+  .loading-dot { width:18px; height:18px; border:2px solid #c9d5e4; border-top-color:var(--primary); border-radius:50%; animation:place-list-spin .8s linear infinite; }
+  @keyframes place-list-spin { to { transform:rotate(360deg); } }
 
   .studio { min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); overflow:hidden; }
   .context-header { min-height:82px; background:#fff; border-bottom:1px solid var(--line); padding:13px 20px; display:flex; align-items:center; }

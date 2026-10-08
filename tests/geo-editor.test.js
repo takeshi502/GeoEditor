@@ -704,6 +704,31 @@ test('地点一覧は安定した空間順をキャッシュし、常設中も�
   assert.match(styles,/\.list-item\.recent/);
 });
 
+test('市町村GeoJSON準備中は未判定グループを作らず、判定中表示を出す', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const loadingGate=client.indexOf("if (municipalityResource.status !== 'ready')");
+  const orderCall=client.indexOf('const placeRecords = orderedPlaceRecords()', loadingGate);
+  assert.ok(loadingGate >= 0 && orderCall > loadingGate);
+  assert.match(client,/市町村を判定中…/);
+  assert.match(client,/const municipalityReady = loadBoundary\('municipality'\);[\s\S]*?renderAll\(\)/);
+  assert.match(client,/await municipalityReady\.catch\(\(\) => \{\}\)/);
+});
+
+test('市町村GeoJSON取得失敗は未判定扱いにせず再試行できる', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/municipalityResource\.status === 'error'[\s\S]*?市町村境界を読み込めませんでした[\s\S]*?retryMunicipalityBtn/);
+  assert.match(client,/retryMunicipalityBtn'\)\.addEventListener\('click', retryMunicipalityBoundary\)/);
+  assert.match(client,/function retryMunicipalityBoundary\(\)[\s\S]*?loadBoundary\('municipality'\)/);
+});
+
+test('境界ロードはreadyキャッシュを再利用し、古い世代の完了結果を破棄する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(client,/if \(resource\.status==='ready'\) return resource/);
+  assert.match(client,/if \(resource\.promise\) return resource\.promise/);
+  assert.match(client,/const generation=\+\+resource\.generation/);
+  assert.equal((client.match(/if \(generation!==resource\.generation\) return resource/g)||[]).length,2);
+});
+
 test('基地・市町村グループは初期全閉で複数展開でき、検索中だけ該当グループを自動展開する', () => {
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
   const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
