@@ -679,6 +679,14 @@ test('左地点一覧を常設し、戻る画面遷移なしで編集対象を�
   assert.match(client,/id="addPointBtn"[^>]*>＋ 乗降位置/);
 });
 
+test('地点モード左カラムは学習候補を登録地点より上に表示する', () => {
+  const index=fs.readFileSync(path.join(root,'Index.html'),'utf8');
+  const candidatePosition=index.indexOf('id="candidateList"');
+  const placePosition=index.indexOf('id="placeList"');
+  assert.ok(candidatePosition >= 0 && placePosition > candidatePosition);
+  assert.match(index,/id="placeModeList"[\s\S]*?学習候補[\s\S]*?candidateList[\s\S]*?登録地点[\s\S]*?placeList/);
+});
+
 test('地点一覧は安定した空間順をキャッシュし、常設中も検索とスクロールを保持する', () => {
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
   const index=fs.readFileSync(path.join(root,'Index.html'),'utf8');
