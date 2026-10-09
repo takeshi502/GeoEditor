@@ -1,0 +1,82 @@
+<script>
+(() => {
+  'use strict';
+  const DB_NAME = 'geo-editor-boundary-assets';
+  const DB_VERSION = 1;
+  const STORE = 'assets';
+
+  function cacheKey(manifest) {
+    return [manifest.kind, manifest.version, manifest.sha256].join(':');
+  }
+
+  function validGeoJson(value) {
+    return !!value && value.type === 'FeatureCollection' && Array.isArray(value.features);
+  }
+
+  function openDb() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) return reject(Error('IndexedDBを利用できません。'));
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath:'key' });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || Error('境界キャッシュを開けません。'));
+    });
+  }
+
+  function requestResult(request) {
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || Error('境界キャッシュ操作に失敗しました。'));
+    });
+  }
+
+  async function digestGeoJson(geojson) {
+    if (!window.crypto || !crypto.subtle || typeof TextEncoder === 'undefined') throw Error('キャッシュ整合性を確認できません。');
+    const bytes = new TextEncoder().encode(JSON.stringify(geojson));
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function remove(manifest) {
+    const db = await openDb();
+    try { await requestResult(db.transaction(STORE, 'readwrite').objectStore(STORE).delete(cacheKey(manifest))); }
+    finally { db.close(); }
+  }
+
+  async function get(manifest) {
+    const db = await openDb();
+    let record;
+    try { record = await requestResult(db.transaction(STORE, 'readonly').objectStore(STORE).get(cacheKey(manifest))); }
+    finally { db.close(); }
+    if (!record) return null;
+    const metadataMatches = record.kind === manifest.kind && record.version === manifest.version && record.officialSha256 === manifest.sha256;
+    if (!metadataMatches || !validGeoJson(record.geojson)) { await remove(manifest); return null; }
+    try {
+      if (await digestGeoJson(record.geojson) !== record.cacheSha256) { await remove(manifest); return null; }
+    } catch (error) { await remove(manifest); return null; }
+    return record.geojson;
+  }
+
+  async function put(manifest, geojson) {
+    if (!validGeoJson(geojson)) throw Error('境界GeoJSONの形式が不正です。');
+    const record = {
+      key:cacheKey(manifest), kind:manifest.kind, version:manifest.version,
+      officialSha256:manifest.sha256, cacheSha256:await digestGeoJson(geojson),
+      savedAt:new Date().toISOString(), geojson
+    };
+    const db = await openDb();
+    try {
+      const keys = await requestResult(db.transaction(STORE, 'readonly').objectStore(STORE).getAllKeys());
+      const tx = db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      keys.filter(key => String(key).startsWith(`${manifest.kind}:`) && key !== record.key).forEach(key => store.delete(key));
+      await requestResult(store.put(record));
+    } finally { db.close(); }
+  }
+
+  window.GeoBoundaryCache = Object.freeze({ cacheKey, get, put, remove, validGeoJson });
+})();
+</script>

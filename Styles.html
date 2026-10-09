@@ -71,6 +71,8 @@
   .place-list-state strong { color:var(--ink); font-size:15px; }
   .place-list-state.error { border-color:#f3b8c0; background:#fff7f8; }
   .place-list-state.error strong { color:var(--danger); }
+  .place-list-part { display:flex; flex-direction:column; gap:5px; }
+  .place-list-part:empty { display:none; }
   .loading-dot { width:18px; height:18px; border:2px solid #c9d5e4; border-top-color:var(--primary); border-radius:50%; animation:place-list-spin .8s linear infinite; }
   @keyframes place-list-spin { to { transform:rotate(360deg); } }
 

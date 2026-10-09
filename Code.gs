@@ -17,6 +17,10 @@ function getGeoBoundary(kind) {
   return apiCall_(function () { return getGeoBoundary_(kind); });
 }
 
+function getGeoBoundaryManifest(kind) {
+  return apiCall_(function () { return getGeoBoundaryManifest_(kind); });
+}
+
 function getPlaceDetail(placeId) {
   return apiCall_(function () { return getPlaceDetail_(placeId); });
 }

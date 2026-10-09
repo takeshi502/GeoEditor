@@ -692,17 +692,19 @@ test('地点一覧は安定した空間順をキャッシュし、常設中も�
   const index=fs.readFileSync(path.join(root,'Index.html'),'utf8');
   const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
   assert.match(index,/include\('SpatialOrder'\)/);
-  assert.match(client,/placeOrderCache: \{ signature:null, records:\[\] \}/);
-  assert.match(client,/GeoPlaceOrder\.signature\(state\.places, state\.points, state\.baseAreas, state\.municipalities, municipalityIndex\)/);
-  assert.match(client,/GeoPlaceOrder\.orderPlaces\(state\.places, state\.points, state\.baseAreas, state\.municipalities, municipalityIndex\)/);
+  assert.match(client,/placeOrderCache: \{ signature:null, records:\[\], baseSignature:null, baseRecords:\[\] \}/);
+  assert.match(client,/GeoPlaceOrder\.signature\(places, state\.points, state\.baseAreas, state\.municipalities, municipalityIndex\)/);
+  assert.match(client,/GeoPlaceOrder\.orderPlaces\(places,state\.points,state\.baseAreas,state\.municipalities,municipalityIndex\)/);
   assert.match(styles,/\.place-group-label[^}]*width:100%[^}]*font-size:16px/);
-  assert.match(client,/const placeRecords = orderedPlaceRecords\(\)\.filter/);
+  assert.match(client,/renderBasePlaceList\(matchingPlaces, q\)/);
+  assert.match(client,/renderMunicipalityPlaceList\(matchingPlaces, q\)/);
   assert.match(client,/expandedPlaceGroups: new Set\(\)/);
-  assert.match(client,/const expanded = searching \|\| state\.expandedPlaceGroups\.has\(group\.key\)/);
+  assert.match(client,/const expanded=searching\|\|state\.expandedPlaceGroups\.has\(group\.key\)/);
   assert.match(client,/data-place-group="\$\{esc\(group\.key\)\}" aria-expanded="\$\{expanded\}"/);
-  assert.match(client,/expanded \? '▼' : '▶'/);
+  assert.match(client,/expanded\?'▼':'▶'/);
   assert.match(client,/function togglePlaceGroup\(groupKey\)[\s\S]*?state\.expandedPlaceGroups\.delete\(groupKey\)[\s\S]*?state\.expandedPlaceGroups\.add\(groupKey\)[\s\S]*?renderLists\(\)/);
-  assert.match(client,/const searching = Boolean\(q\.trim\(\)\)/);
+  assert.match(client,/renderPlaceGroups\(\$\('basePlaceList'\)[\s\S]*?Boolean\(q\.trim\(\)\)/);
+  assert.match(client,/renderPlaceGroups\(container[\s\S]*?Boolean\(context\.q\.trim\(\)\)/);
   assert.match(client,/state\.municipalities = response\.data\.municipalities/);
   assert.match(client,/listView: \{ scrollTop:0, lastPlaceId:null, lastCandidateId:null \}/);
   assert.match(client,/state\.listView\.scrollTop = panel\.scrollTop/);
@@ -714,18 +716,19 @@ test('地点一覧は安定した空間順をキャッシュし、常設中も�
 
 test('市町村GeoJSON準備中は未判定グループを作らず、判定中表示を出す', () => {
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
-  const loadingGate=client.indexOf("if (municipalityResource.status !== 'ready')");
-  const orderCall=client.indexOf('const placeRecords = orderedPlaceRecords()', loadingGate);
+  const loadingGate=client.indexOf("if(resource.status!=='ready')");
+  const orderCall=client.indexOf('renderPlaceGroups(container,orderedPlaceRecords()', loadingGate);
   assert.ok(loadingGate >= 0 && orderCall > loadingGate);
   assert.match(client,/市町村を判定中…/);
   assert.match(client,/const municipalityReady = loadBoundary\('municipality'\);[\s\S]*?renderAll\(\)/);
-  assert.match(client,/await municipalityReady\.catch\(\(\) => \{\}\)/);
+  assert.match(client,/municipalityReady\.catch\(\(\) => \{\}\)/);
+  assert.match(client,/renderBasePlaceList\(matchingPlaces, q\);[\s\S]*?renderMunicipalityPlaceList\(matchingPlaces, q\)/);
 });
 
 test('市町村GeoJSON取得失敗は未判定扱いにせず再試行できる', () => {
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
-  assert.match(client,/municipalityResource\.status === 'error'[\s\S]*?市町村境界を読み込めませんでした[\s\S]*?retryMunicipalityBtn/);
-  assert.match(client,/retryMunicipalityBtn'\)\.addEventListener\('click', retryMunicipalityBoundary\)/);
+  assert.match(client,/resource\.status==='error'[\s\S]*?市町村境界を読み込めませんでした[\s\S]*?retryMunicipalityBtn/);
+  assert.match(client,/retryMunicipalityBtn'\)\)\$\('retryMunicipalityBtn'\)\.addEventListener\('click',retryMunicipalityBoundary\)/);
   assert.match(client,/function retryMunicipalityBoundary\(\)[\s\S]*?loadBoundary\('municipality'\)/);
 });
 
@@ -734,18 +737,45 @@ test('境界ロードはreadyキャッシュを再利用し、古い世代の完
   assert.match(client,/if \(resource\.status==='ready'\) return resource/);
   assert.match(client,/if \(resource\.promise\) return resource\.promise/);
   assert.match(client,/const generation=\+\+resource\.generation/);
-  assert.equal((client.match(/if \(generation!==resource\.generation\) return resource/g)||[]).length,2);
+  assert.ok((client.match(/if\s*\(generation!==resource\.generation\)\s*return resource/g)||[]).length>=2);
+});
+
+test('境界assetはmanifestとIndexedDB永続キャッシュを使いversion・SHA変更を分離する', () => {
+  const cache=fs.readFileSync(path.join(root,'BoundaryCache.html'),'utf8');
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const code=fs.readFileSync(path.join(root,'Code.gs'),'utf8');
+  const service=fs.readFileSync(path.join(root,'BoundaryService.gs'),'utf8');
+  assert.match(cache,/const DB_NAME = 'geo-editor-boundary-assets'/);
+  assert.match(cache,/\[manifest\.kind, manifest\.version, manifest\.sha256\]\.join\(':'\)/);
+  assert.match(cache,/indexedDB\.open/);
+  assert.match(cache,/crypto\.subtle\.digest\('SHA-256'/);
+  assert.match(cache,/metadataMatches[\s\S]*?digestGeoJson\(record\.geojson\)/);
+  assert.match(client,/server\('getGeoBoundaryManifest',kind\)/);
+  assert.match(client,/GeoBoundaryCache\.get\(manifest\)/);
+  assert.match(client,/GeoBoundaryCache\.put\(manifest,geojson\)/);
+  assert.match(client,/data\.version!==manifest\.version\|\|data\.sha256!==manifest\.sha256/);
+  assert.match(code,/function getGeoBoundaryManifest\(kind\)/);
+  assert.match(service,/function getGeoBoundaryManifest_\(kind\)/);
+});
+
+test('破損キャッシュは削除して正式取得へ戻りbbox fallbackを使わない', () => {
+  const cache=fs.readFileSync(path.join(root,'BoundaryCache.html'),'utf8');
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  assert.match(cache,/!metadataMatches \|\| !validGeoJson\(record\.geojson\)[\s\S]*?remove\(manifest\)/);
+  assert.match(cache,/digestGeoJson\(record\.geojson\) !== record\.cacheSha256[\s\S]*?remove\(manifest\)/);
+  assert.match(client,/catch\(error\)\{try\{await GeoBoundaryCache\.remove\(manifest\);\}catch\(ignore\)\{\}geojson=null;index=null;\}/);
+  assert.match(client,/if\(!geojson\)[\s\S]*?server\('getGeoBoundary',kind\)/);
 });
 
 test('基地・市町村グループは初期全閉で複数展開でき、検索中だけ該当グループを自動展開する', () => {
   const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
   const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
   assert.match(client,/expandedPlaceGroups: new Set\(\)/);
-  assert.match(client,/const searching = Boolean\(q\.trim\(\)\)/);
-  assert.match(client,/const expanded = searching \|\| state\.expandedPlaceGroups\.has\(group\.key\)/);
-  assert.match(client,/if \(!expanded\) return heading/);
+  assert.match(client,/Boolean\(q\.trim\(\)\)/);
+  assert.match(client,/const expanded=searching\|\|state\.expandedPlaceGroups\.has\(group\.key\)/);
+  assert.match(client,/if\(!expanded\)return heading/);
   assert.match(client,/aria-expanded="\$\{expanded\}"/);
-  assert.match(client,/expanded \? '▼' : '▶'/);
+  assert.match(client,/expanded\?'▼':'▶'/);
   assert.match(client,/state\.expandedPlaceGroups\.has\(groupKey\)[\s\S]*?delete\(groupKey\)[\s\S]*?add\(groupKey\)/);
   assert.doesNotMatch(client,/expandedPlaceGroups\s*=\s*new Set/);
   assert.match(client,/if \(panel\) state\.listView\.scrollTop = panel\.scrollTop;[\s\S]*?renderLists\(\)/);
@@ -863,7 +893,7 @@ test('地点をまとめるUIは近隣・検索・地図選択と確認を共通
   assert.match(client,/id="startMergePlace">この地点を別の地点にまとめる/);
   assert.match(client,/function startMergeFlow\(\)/);
   assert.match(client,/function chooseMergeTarget\(placeId\)/);
-  assert.match(client,/state\.mergeFlow \? chooseMergeTarget\(el\.dataset\.place\) : selectPlace/);
+  assert.match(client,/state\.mergeFlow\?chooseMergeTarget\(el\.dataset\.place\):selectPlace/);
   assert.match(client,/state\.mergeFlow \? chooseMergeTarget\(point\.place_id\) : selectPlace/);
   assert.match(client,/近くの地点/);
   assert.match(client,/残す地点/);

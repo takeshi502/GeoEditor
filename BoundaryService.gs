@@ -10,6 +10,12 @@ var GEO_BOUNDARY_CONFIG = {
   }
 };
 
+function getGeoBoundaryManifest_(kind) {
+  var config = GEO_BOUNDARY_CONFIG[kind];
+  if (!config) throw geoError_('VALIDATION_ERROR', '取得できない境界種別です。');
+  return { kind:kind, version:config.version, sha256:config.sha256 };
+}
+
 function getGeoBoundary_(kind) {
   var config = GEO_BOUNDARY_CONFIG[kind];
   if (!config) throw geoError_('VALIDATION_ERROR', '取得できない境界種別です。');

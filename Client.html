@@ -4,8 +4,8 @@
   const state = {
     mode: 'places', selectedBoundaryId:null, boundaryPoint:null, showBoundaryBboxes:false,
     boundaries: {
-      municipality:{ status:'idle', index:null, geojson:null, error:null, version:'', sha256:'', promise:null, generation:0 },
-      base:{ status:'idle', index:null, geojson:null, error:null, version:'', sha256:'', promise:null, generation:0 }
+      municipality:{ status:'idle', phase:'idle', index:null, geojson:null, error:null, version:'', sha256:'', manifest:null, metrics:null, promise:null, generation:0 },
+      base:{ status:'idle', phase:'idle', index:null, geojson:null, error:null, version:'', sha256:'', manifest:null, metrics:null, promise:null, generation:0 }
     },
     places: [], points: [], candidates: [], baseAreas: [], municipalities: [],
     selectedPlaceId: null, selectedPointId: null, selectedCandidateId: null,
@@ -13,7 +13,7 @@
     draftPlace: null, draftPoints: [], original: null, candidateDraft: null,
     dirty: false, placement: null, addFlowPointId: null, dragPointId: null,
     moveSession: null, mergeFlow: null, query: '',
-    placeOrderCache: { signature:null, records:[] },
+    placeOrderCache: { signature:null, records:[], baseSignature:null, baseRecords:[] },
     expandedPlaceGroups: new Set(),
     listView: { scrollTop:0, lastPlaceId:null, lastCandidateId:null }
   };
@@ -51,7 +51,7 @@
       await new Promise(resolve => requestAnimationFrame(resolve));
       map.invalidateSize({ pan:false });
       fitData();
-      await municipalityReady.catch(() => {});
+      municipalityReady.catch(() => {});
     } catch (error) { showError(error); }
     finally { setBusy(false); }
   }
@@ -80,48 +80,74 @@
     const pointNames = {};
     state.points.forEach(p => { (pointNames[p.place_id] ||= []).push(p['ポイント名']); });
     const matchingPlaces = state.places.filter(place => place['有効'] !== false && [place['地点名'], place['別名'], ...(pointNames[place.place_id] || [])].join(' ').toLocaleLowerCase('ja').includes(q));
-    const matchingPlaceIds = new Set(matchingPlaces.map(place => place.place_id));
     $('placeCount').textContent = `${matchingPlaces.length}件`;
-    const municipalityResource = state.boundaries.municipality;
-    if (municipalityResource.status !== 'ready') {
-      $('placeList').innerHTML = municipalityResource.status === 'error'
-        ? `<div class="place-list-state error"><strong>市町村境界を読み込めませんでした</strong><span>${esc(municipalityResource.error && municipalityResource.error.message || '取得に失敗しました')}</span><button type="button" id="retryMunicipalityBtn" class="secondary compact">再試行</button></div>`
-        : '<div class="place-list-state loading"><span class="loading-dot" aria-hidden="true"></span><strong>市町村を判定中…</strong><span>正式な境界データを準備しています</span></div>';
-      if ($('retryMunicipalityBtn')) $('retryMunicipalityBtn').addEventListener('click', retryMunicipalityBoundary);
-    } else {
-      const placeRecords = orderedPlaceRecords().filter(record => matchingPlaceIds.has(record.place.place_id));
-      const groups = [];
-      placeRecords.forEach(record => {
-        let group = groups[groups.length - 1];
-        if (!group || group.key !== record.groupKey) {
-          group = { key:record.groupKey, label:record.groupLabel, records:[] };
-          groups.push(group);
-        }
-        group.records.push(record);
-      });
-      const searching = Boolean(q.trim());
-      $('placeList').innerHTML = groups.map(group => {
-        const expanded = searching || state.expandedPlaceGroups.has(group.key);
-        const heading = `<button type="button" class="place-group-label" data-place-group="${esc(group.key)}" aria-expanded="${expanded}"><span class="place-group-chevron" aria-hidden="true">${expanded ? '▼' : '▶'}</span><span>${esc(group.label)}</span><span class="place-group-count">${group.records.length}件</span></button>`;
-        if (!expanded) return heading;
-        const items = group.records.map(record => {
-          const p = record.place;
-          const count = state.points.filter(point => point.place_id === p.place_id && point['有効'] !== false).length;
-          const active = state.mergeFlow && p.place_id === state.mergeFlow.targetPlaceId ? 'merge-target' : p.place_id === state.selectedPlaceId ? 'active' : '';
-          const recent = !state.selectedPlaceId && p.place_id === state.listView.lastPlaceId ? 'recent' : '';
-          return `<button class="list-item ${active} ${recent}" data-place="${esc(p.place_id)}"><span class="list-title">${esc(p['地点名'])}</span><span class="list-meta">乗降位置 ${count}か所 · ${esc(p['別名'] || p.place_id)}</span></button>`;
-        }).join('');
-        return `${heading}<div class="place-group-items">${items}</div>`;
-      }).join('') || '<div class="list-meta">該当なし</div>';
-      $('placeList').querySelectorAll('[data-place-group]').forEach(el => el.addEventListener('click', () => togglePlaceGroup(el.dataset.placeGroup)));
-      $('placeList').querySelectorAll('[data-place]').forEach(el => el.addEventListener('click', () => state.mergeFlow ? chooseMergeTarget(el.dataset.place) : selectPlace(el.dataset.place)));
-    }
+    renderBasePlaceList(matchingPlaces, q);
+    renderMunicipalityPlaceList(matchingPlaces, q);
 
     const candidates = state.candidates.filter(c => !['promoted','merged','rejected'].includes(c['候補状態']) && String(c['候補名']).toLocaleLowerCase('ja').includes(q));
     $('candidateCount').textContent = `${candidates.length}件`;
     $('candidateList').innerHTML = candidates.map(c => `<button class="list-item ${c.candidate_id === state.selectedCandidateId ? 'active' : ''} ${!state.selectedCandidateId && c.candidate_id === state.listView.lastCandidateId ? 'recent' : ''}" data-candidate="${esc(c.candidate_id)}"><span class="list-title">${esc(c['候補名'])}</span><span class="list-meta">確認 ${esc(c['確認回数'])}回 · ${esc(c['候補状態'])}</span></button>`).join('') || '<div class="list-meta">未処理候補なし</div>';
     $('candidateList').querySelectorAll('[data-candidate]').forEach(el => el.addEventListener('click', () => selectCandidate(el.dataset.candidate)));
     requestAnimationFrame(() => { document.querySelector('.left-panel').scrollTop = state.listView.scrollTop; });
+  }
+
+  function placeMatchesQuery() {
+    const q=state.query.toLocaleLowerCase('ja'), pointNames={};
+    state.points.forEach(point=>{(pointNames[point.place_id] ||= []).push(point['ポイント名']);});
+    return { q, places:state.places.filter(place=>place['有効']!==false && [place['地点名'],place['別名'],...(pointNames[place.place_id]||[])].join(' ').toLocaleLowerCase('ja').includes(q)) };
+  }
+
+  function renderPlaceGroups(container, records, searching) {
+    const groups=[];
+    records.forEach(record=>{
+      let group=groups[groups.length-1];
+      if(!group||group.key!==record.groupKey){group={key:record.groupKey,label:record.groupLabel,records:[]};groups.push(group);}
+      group.records.push(record);
+    });
+    container.innerHTML=groups.map(group=>{
+      const expanded=searching||state.expandedPlaceGroups.has(group.key);
+      const heading=`<button type="button" class="place-group-label" data-place-group="${esc(group.key)}" aria-expanded="${expanded}"><span class="place-group-chevron" aria-hidden="true">${expanded?'▼':'▶'}</span><span>${esc(group.label)}</span><span class="place-group-count">${group.records.length}件</span></button>`;
+      if(!expanded)return heading;
+      const items=group.records.map(record=>{
+        const p=record.place, count=state.points.filter(point=>point.place_id===p.place_id&&point['有効']!==false).length;
+        const active=state.mergeFlow&&p.place_id===state.mergeFlow.targetPlaceId?'merge-target':p.place_id===state.selectedPlaceId?'active':'';
+        const recent=!state.selectedPlaceId&&p.place_id===state.listView.lastPlaceId?'recent':'';
+        return `<button class="list-item ${active} ${recent}" data-place="${esc(p.place_id)}"><span class="list-title">${esc(p['地点名'])}</span><span class="list-meta">乗降位置 ${count}か所 · ${esc(p['別名']||p.place_id)}</span></button>`;
+      }).join('');
+      return `${heading}<div class="place-group-items">${items}</div>`;
+    }).join('');
+    container.querySelectorAll('[data-place-group]').forEach(el=>el.addEventListener('click',()=>togglePlaceGroup(el.dataset.placeGroup)));
+    container.querySelectorAll('[data-place]').forEach(el=>el.addEventListener('click',()=>state.mergeFlow?chooseMergeTarget(el.dataset.place):selectPlace(el.dataset.place)));
+  }
+
+  function renderBasePlaceList(matchingPlaces, q) {
+    const ids=new Set(matchingPlaces.filter(place=>String(place.base_area_id||'').trim()).map(place=>place.place_id));
+    renderPlaceGroups($('basePlaceList'),orderedBasePlaceRecords().filter(record=>ids.has(record.place.place_id)),Boolean(q.trim()));
+  }
+
+  function municipalityLoadingHtml(resource) {
+    if(resource.status==='error')return `<div class="place-list-state error"><strong>市町村境界を読み込めませんでした</strong><span>${esc(resource.error&&resource.error.message||'取得に失敗しました')}</span><button type="button" id="retryMunicipalityBtn" class="secondary compact">再試行</button></div>`;
+    const detail=resource.phase==='cache'?'保存済みの正式境界を確認しています':resource.phase==='fetch'?'正式な境界データを読み込んでいます':'正式な境界データを準備しています';
+    return `<div class="place-list-state loading"><span class="loading-dot" aria-hidden="true"></span><strong>市町村を判定中…</strong><span>${detail}</span></div>`;
+  }
+
+  function renderMunicipalityPlaceList(matchingPlaces, q) {
+    if(state.mode!=='places')return;
+    const panel=document.querySelector('.left-panel');
+    if(panel)state.listView.scrollTop=panel.scrollTop;
+    const context=matchingPlaces?{places:matchingPlaces,q}:placeMatchesQuery();
+    const container=$('municipalityPlaceList'), resource=state.boundaries.municipality;
+    if(resource.status!=='ready'){
+      container.innerHTML=municipalityLoadingHtml(resource);
+      if($('retryMunicipalityBtn'))$('retryMunicipalityBtn').addEventListener('click',retryMunicipalityBoundary);
+    }else{
+      const classificationStarted=performance.now();
+      const ids=new Set(context.places.filter(place=>!String(place.base_area_id||'').trim()).map(place=>place.place_id));
+      renderPlaceGroups(container,orderedPlaceRecords().filter(record=>ids.has(record.place.place_id)),Boolean(context.q.trim()));
+      if(!container.innerHTML)container.innerHTML='<div class="list-meta">基地外の該当地点なし</div>';
+      if(resource.metrics){resource.metrics.classificationMs=performance.now()-classificationStarted;publishBoundaryMetrics('municipality');}
+    }
+    requestAnimationFrame(()=>{const current=document.querySelector('.left-panel');if(current)current.scrollTop=state.listView.scrollTop;});
   }
 
   function togglePlaceGroup(groupKey) {
@@ -134,11 +160,23 @@
 
   function orderedPlaceRecords() {
     const municipalityIndex = state.boundaries.municipality.index;
-    const signature = GeoPlaceOrder.signature(state.places, state.points, state.baseAreas, state.municipalities, municipalityIndex);
+    const places=state.places.filter(place=>place['有効']!==false&&!String(place.base_area_id||'').trim());
+    const signature = GeoPlaceOrder.signature(places, state.points, state.baseAreas, state.municipalities, municipalityIndex);
     if (state.placeOrderCache.signature !== signature) {
-      state.placeOrderCache = { signature, records:GeoPlaceOrder.orderPlaces(state.places, state.points, state.baseAreas, state.municipalities, municipalityIndex) };
+      state.placeOrderCache.signature=signature;
+      state.placeOrderCache.records=GeoPlaceOrder.orderPlaces(places,state.points,state.baseAreas,state.municipalities,municipalityIndex);
     }
     return state.placeOrderCache.records;
+  }
+
+  function orderedBasePlaceRecords() {
+    const places=state.places.filter(place=>place['有効']!==false&&String(place.base_area_id||'').trim());
+    const signature=GeoPlaceOrder.signature(places,state.points,state.baseAreas,state.municipalities,null);
+    if(state.placeOrderCache.baseSignature!==signature){
+      state.placeOrderCache.baseSignature=signature;
+      state.placeOrderCache.baseRecords=GeoPlaceOrder.orderPlaces(places,state.points,state.baseAreas,state.municipalities,null);
+    }
+    return state.placeOrderCache.baseRecords;
   }
 
   function boundaryKind() { return state.mode === 'bases' ? 'base' : 'municipality'; }
@@ -151,26 +189,77 @@
     const item=boundaryMetadata(kind,id)||{};
     return String(kind==='base' ? (item['基地名']||item.base_area_name||id) : (item['市町村表示名']||item['市町村正式名']||id));
   }
+  function publishBoundaryMetrics(kind) {
+    window.GeoBoundaryMetrics=window.GeoBoundaryMetrics||{};
+    window.GeoBoundaryMetrics[kind]=Object.assign({},state.boundaries[kind].metrics||{});
+  }
+  function renderBoundaryProgress(kind) {
+    if(kind==='municipality'&&state.mode==='places')renderMunicipalityPlaceList();
+    else if(state.mode!=='places')renderAll();
+  }
+  function buildBoundaryIndex(kind,geojson) {
+    return GeoBoundary.buildIndex(geojson,{idProperty:kind==='base'?'base_area_id':'municipality_id',cellSize:kind==='base'?.02:.05});
+  }
   async function loadBoundary(kind) {
     const resource=state.boundaries[kind];
     if (resource.status==='ready') return resource;
     if (resource.promise) return resource.promise;
     const generation=++resource.generation;
-    resource.status='loading'; resource.error=null;
-    if (state.mode!=='places') renderAll();
-    resource.promise=server('getGeoBoundary',kind).then(response=>{
-      if (generation!==resource.generation) return resource;
-      const data=response.data;
-      resource.geojson=data.geojson; resource.version=data.version; resource.sha256=data.sha256;
-      resource.index=GeoBoundary.buildIndex(data.geojson,{idProperty:kind==='base'?'base_area_id':'municipality_id',cellSize:kind==='base'?.02:.05});
-      resource.status='ready'; resource.promise=null;
-      if (!state.selectedBoundaryId && kind===boundaryKind()) state.selectedBoundaryId=resource.index.ids()[0]||null;
-      if (kind==='municipality') state.placeOrderCache.signature=null;
-      renderAll();
+    const started=performance.now();
+    resource.status='loading'; resource.phase='manifest'; resource.error=null;
+    resource.metrics={source:'pending',manifestMs:0,cacheLookupMs:0,fetchMs:0,indexMs:0,cacheWriteMs:0,classificationMs:0,totalMs:0};
+    renderBoundaryProgress(kind);
+    resource.promise=(async()=>{
+      let mark=performance.now();
+      const manifestResponse=await server('getGeoBoundaryManifest',kind);
+      if(generation!==resource.generation)return resource;
+      resource.metrics.manifestMs=performance.now()-mark;
+      const manifest=manifestResponse.data;
+      if(!manifest||manifest.kind!==kind||!manifest.version||!/^[a-f0-9]{64}$/.test(String(manifest.sha256)))throw {error_code:'BOUNDARY_FORMAT_ERROR',message:'正式境界manifestの形式が不正です。'};
+      resource.manifest=manifest;
+      resource.phase='cache'; renderBoundaryProgress(kind);
+
+      let geojson=null, index=null, source='network';
+      mark=performance.now();
+      try{geojson=await GeoBoundaryCache.get(manifest);}catch(error){geojson=null;}
+      if(generation!==resource.generation)return resource;
+      resource.metrics.cacheLookupMs=performance.now()-mark;
+      if(geojson){
+        mark=performance.now();
+        try{index=buildBoundaryIndex(kind,geojson);source='cache';}
+        catch(error){try{await GeoBoundaryCache.remove(manifest);}catch(ignore){}geojson=null;index=null;}
+        resource.metrics.indexMs=performance.now()-mark;
+      }
+
+      if(!geojson){
+        resource.phase='fetch'; renderBoundaryProgress(kind);
+        mark=performance.now();
+        const response=await server('getGeoBoundary',kind);
+        if(generation!==resource.generation)return resource;
+        resource.metrics.fetchMs=performance.now()-mark;
+        const data=response.data;
+        if(!data||data.version!==manifest.version||data.sha256!==manifest.sha256||!GeoBoundaryCache.validGeoJson(data.geojson))throw {error_code:'BOUNDARY_INTEGRITY_ERROR',message:'正式境界データのversionまたはSHA-256が一致しません。'};
+        geojson=data.geojson;
+        resource.phase='index'; renderBoundaryProgress(kind);
+        mark=performance.now(); index=buildBoundaryIndex(kind,geojson); resource.metrics.indexMs=performance.now()-mark;
+        mark=performance.now();
+        try{await GeoBoundaryCache.put(manifest,geojson);}catch(error){}
+        resource.metrics.cacheWriteMs=performance.now()-mark;
+      }
+
+      if(generation!==resource.generation)return resource;
+      resource.geojson=geojson; resource.index=index; resource.version=manifest.version; resource.sha256=manifest.sha256;
+      resource.status='ready'; resource.phase='ready'; resource.promise=null;
+      resource.metrics.source=source; resource.metrics.totalMs=performance.now()-started;
+      if(!state.selectedBoundaryId&&kind===boundaryKind())state.selectedBoundaryId=index.ids()[0]||null;
+      if(kind==='municipality')state.placeOrderCache.signature=null;
+      if(kind==='municipality'&&state.mode==='places')renderMunicipalityPlaceList();else renderAll();
+      publishBoundaryMetrics(kind);
       return resource;
-    }).catch(error=>{
+    })().catch(error=>{
       if (generation!==resource.generation) return resource;
-      resource.status='error'; resource.error=error; resource.promise=null;
+      resource.status='error'; resource.phase='error'; resource.error=error; resource.promise=null;
+      resource.metrics.totalMs=performance.now()-started; publishBoundaryMetrics(kind);
       renderAll(); throw error;
     });
     return resource.promise;
@@ -178,7 +267,7 @@
   function retryMunicipalityBoundary() {
     const resource=state.boundaries.municipality;
     resource.generation+=1;
-    resource.status='idle'; resource.index=null; resource.geojson=null; resource.error=null; resource.promise=null;
+    resource.status='idle'; resource.phase='idle'; resource.index=null; resource.geojson=null; resource.error=null; resource.promise=null;
     state.placeOrderCache.signature=null;
     const promise=loadBoundary('municipality');
     renderLists();

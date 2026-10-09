@@ -25,7 +25,7 @@
       </div>
       <label class="search"><span>地点・乗降位置を検索</span><input id="searchInput" type="search" placeholder="地点名・別名・乗降位置名"></label>
       <section><h2>学習候補 <span id="candidateCount"></span></h2><div id="candidateList" class="item-list"></div></section>
-      <section><h2>登録地点 <span id="placeCount"></span></h2><div id="placeList" class="item-list"></div></section></div>
+      <section><h2>登録地点 <span id="placeCount"></span></h2><div id="placeList" class="item-list"><div id="basePlaceList" class="place-list-part"></div><div id="municipalityPlaceList" class="place-list-part"></div></div></section></div>
       <div id="boundaryModeList" hidden><div class="list-heading"><div><span class="eyebrow">BOUNDARY REFERENCE</span><h1 id="boundaryListTitle">境界を確認</h1></div><button id="retryBoundaryBtn" class="secondary compact">再読込</button></div><div id="boundaryStatus" class="boundary-status"></div><div id="boundaryList" class="item-list"></div></div>
     </aside>
 
@@ -65,6 +65,7 @@
   </main>
   <?!= include('Leaflet'); ?>
   <?!= include('BoundaryGeometry'); ?>
+  <?!= include('BoundaryCache'); ?>
   <?!= include('SpatialOrder'); ?>
   <?!= include('Client'); ?>
 </body>
