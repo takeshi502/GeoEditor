@@ -655,7 +655,8 @@
         ${area('備考','place-note',p['備考'])}
         <div class="field"><label>最終使用日時</label><div class="readonly">${esc(p['最終使用日時'] || '—')}</div></div>
         <div class="field"><label>revision</label><div class="readonly">${esc(p.revision || '新規')}</div></div>
-      </details>`;
+      </details>
+      ${p.place_id ? '<div class="danger-zone"><strong>危険な操作</strong><p>誤登録・不要になった地点を、過去ログを残したまま今後の判定対象から外します。</p><button type="button" id="deletePlace" class="danger">この地点を削除</button></div>' : ''}`;
     bindValue('place-name', v => p['地点名'] = v, false, true);
     bindValue('place-alias', v => p['別名'] = v);
     bindValue('place-base', v => p.base_area_id = v);
@@ -664,6 +665,7 @@
     $('place-active').addEventListener('change', e => { p['有効'] = e.target.checked; markDirty(); });
     $('overviewAddPoint').addEventListener('click', startAddPoint);
     if ($('startMergePlace')) $('startMergePlace').addEventListener('click', startMergeFlow);
+    if ($('deletePlace')) $('deletePlace').addEventListener('click', disableSelectedPlace);
   }
 
   function renderPointEditor() {
@@ -1163,6 +1165,37 @@
       showWarnings(response.warnings);
       selectPlace(response.data.place.place_id);
       toast('地点と乗降位置を保存しました。');
+    } catch (error) { showError(error); }
+    finally { setBusy(false); }
+  }
+
+  async function disableSelectedPlace() {
+    if (!state.original || !state.original.place || !state.original.place.place_id) return;
+    const placeId = state.original.place.place_id;
+    const place = state.places.find(item => item.place_id === placeId) || state.original.place;
+    const points = state.points.filter(point => point.place_id === placeId);
+    const activeCount = points.filter(point => point['有効'] !== false).length;
+    const dirtyNotice = hasUnsavedChanges() ? '\n\n未保存の変更があります。削除すると未保存の変更は破棄されます。' : '';
+    const confirmed = confirm(`「${place['地点名']}」を削除しますか？\n\n乗降位置：${activeCount}件\n\n・地点は今後の判定対象から外れます\n・配下の乗降位置も無効になります\n・過去ログは変更されません${dirtyNotice}`);
+    if (!confirmed) return;
+    const payload = {
+      place_id: place.place_id,
+      place_revision: place.revision,
+      point_revisions: points.map(point => ({ point_id:point.point_id, revision:point.revision }))
+    };
+    setBusy(true, '地点を削除しています…');
+    try {
+      const response = await server('disablePlace', payload);
+      state.places = state.places.map(item => item.place_id === response.data.place.place_id ? response.data.place : item);
+      state.points = state.points.filter(point => point.place_id !== response.data.place.place_id).concat(response.data.points);
+      state.placeOrderCache = { signature:null, records:[], baseSignature:null, baseRecords:[] };
+      state.listView.lastPlaceId = null;
+      clearSelection();
+      setDirty(false);
+      renderAll();
+      fitData();
+      resetRightPanelScroll();
+      toast('地点を削除しました。過去ログは変更されていません。');
     } catch (error) { showError(error); }
     finally { setBusy(false); }
   }

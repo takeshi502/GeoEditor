@@ -14,7 +14,7 @@ const context = vm.createContext({
   isFinite, parseInt, parseFloat,
   Utilities: { getUuid: () => `uuid-${++uuidCounter}` }
 });
-for (const name of ['Schema.gs','Code.gs','Validation.gs','GeoMath.gs','PlaceService.gs','PlaceMergeService.gs','CandidateService.gs']) {
+for (const name of ['Schema.gs','Code.gs','Validation.gs','GeoMath.gs','PlaceService.gs','PlaceDeleteService.gs','PlaceMergeService.gs','CandidateService.gs']) {
   vm.runInContext(fs.readFileSync(path.join(root, name), 'utf8'), context, { filename:name });
 }
 const spatialContext = vm.createContext({ window:{}, console });
@@ -538,6 +538,99 @@ test('論理削除は有効=falseとして保持する', () => {
   assert.equal(disabled['有効'],false);
   assert.equal(disabled.point_id,'p1');
   assert.equal(disabled.revision,2);
+});
+
+function deleteHarness(points=[point()]) {
+  const places=table('places',[place()]);
+  const pointTable=table('points',points);
+  context.withWriteLock_=fn=>fn(); context.spreadsheet_=()=>({});
+  context.readTable_=(_ss,key)=>key === 'places' ? places : pointTable;
+  return {places,points:pointTable};
+}
+
+function deletePayload(points=[point()]) {
+  return {
+    place_id:'a', place_revision:1,
+    point_revisions:points.map(item=>({point_id:item.point_id,revision:item.revision}))
+  };
+}
+
+test('地点削除は親地点と有効な3乗降位置を論理削除しrevisionを進める', () => {
+  const points=[point(),point({point_id:'p2','表示順':2,revision:3}),point({point_id:'p3','表示順':3,revision:7})];
+  const t=deleteHarness(points);
+  const result=context.disablePlace_(deletePayload(points));
+  assert.equal(result.data.place['有効'],false);
+  assert.equal(result.data.place.revision,2);
+  assert.equal(result.data.disabled_point_count,3);
+  assert.deepEqual(Array.from(result.data.points,item=>item['有効']),[false,false,false]);
+  assert.deepEqual(Array.from(result.data.points,item=>item.revision),[2,4,8]);
+  assert.equal(t.places.sheet.rows.length,1);
+  assert.equal(t.points.sheet.rows.length,3);
+});
+
+test('point 1件の地点削除と二重削除を安全に扱う', () => {
+  let t=deleteHarness();
+  let result=context.disablePlace_(deletePayload());
+  assert.equal(result.data.points[0]['有効'],false);
+  t=deleteHarness([point({'有効':false,revision:2})]);
+  t.places.rows[0]['有効']=false; t.places.sheet.rows[0]['有効']=false;
+  result=context.disablePlace_({place_id:'a',place_revision:0,point_revisions:[]});
+  assert.equal(result.data.already_disabled,true);
+  assert.equal(t.places.sheet.writes.length,0);
+  assert.equal(t.points.sheet.writes.length,0);
+});
+
+test('親地点が無効でも残存する有効pointを修復して無効化する', () => {
+  const points=[point(),point({point_id:'p2','有効':false,revision:4})];
+  const t=deleteHarness(points);
+  t.places.rows[0]['有効']=false; t.places.sheet.rows[0]['有効']=false;
+  const result=context.disablePlace_({place_id:'a',place_revision:0,point_revisions:[{point_id:'p1',revision:1},{point_id:'p2',revision:4}]});
+  assert.equal(result.data.place.revision,1);
+  assert.equal(result.data.disabled_point_count,1);
+  assert.deepEqual(Array.from(result.data.points,item=>item.revision),[2,4]);
+  assert.deepEqual(Array.from(result.data.points,item=>item['有効']),[false,false]);
+});
+
+test('地点削除はplaceまたはpointのrevision競合を拒否する', () => {
+  let t=deleteHarness();
+  assert.throws(()=>context.disablePlace_(Object.assign({},deletePayload(),{place_revision:0})),error=>error.code==='REVISION_CONFLICT');
+  t=deleteHarness();
+  assert.throws(()=>context.disablePlace_({place_id:'a',place_revision:1,point_revisions:[{point_id:'p1',revision:0}]}),error=>error.code==='REVISION_CONFLICT');
+});
+
+test('地点削除の途中失敗はplaceとpointを補償復元する', () => {
+  const points=[point(),point({point_id:'p2','表示順':2})];
+  const t=deleteHarness(points);
+  const beforePlaces=JSON.parse(JSON.stringify(t.places.sheet.rows));
+  const beforePoints=JSON.parse(JSON.stringify(t.points.sheet.rows));
+  t.points.sheet.failAfter=0;
+  assert.throws(()=>context.disablePlace_(deletePayload(points)),/simulated write failure/);
+  assert.deepEqual(t.places.sheet.rows.map(row=>Object.fromEntries(t.places.headers.map(h=>[h,row[h] == null ? '' : row[h]]))),beforePlaces.map(row=>Object.fromEntries(t.places.headers.map(h=>[h,row[h] == null ? '' : row[h]]))));
+  assert.deepEqual(t.points.sheet.rows.map(row=>Object.fromEntries(t.points.headers.map(h=>[h,row[h] == null ? '' : row[h]]))),beforePoints.map(row=>Object.fromEntries(t.points.headers.map(h=>[h,row[h] == null ? '' : row[h]]))));
+});
+
+test('削除済みpointは判定対象外で、削除APIは過去ログを読み書きしない', () => {
+  const disabled=point({'有効':false});
+  assert.equal(context.overlapWarnings_([point({point_id:'active'})],[disabled]).length,0);
+  const service=fs.readFileSync(path.join(root,'PlaceDeleteService.gs'),'utf8');
+  assert.doesNotMatch(service,/営業案件|状態ログ|GPSログ|経由地点ログ|removeRow|deleteRow/);
+  assert.match(service,/readTable_\(ss, 'places'\)/);
+  assert.match(service,/readTable_\(ss, 'points'\)/);
+});
+
+test('地点全体に確認付き削除UIを表示し、削除後に一覧と選択stateを更新する', () => {
+  const client=fs.readFileSync(path.join(root,'Client.html'),'utf8');
+  const styles=fs.readFileSync(path.join(root,'Styles.html'),'utf8');
+  assert.match(client,/id="deletePlace" class="danger">この地点を削除/);
+  assert.match(client,/乗降位置：\$\{activeCount\}件/);
+  assert.match(client,/未保存の変更があります。削除すると未保存の変更は破棄されます/);
+  assert.match(client,/過去ログは変更されません/);
+  assert.match(client,/state\.places\.find\(item => item\.place_id === placeId\)/);
+  assert.match(client,/state\.points\.filter\(point => point\.place_id === placeId\)/);
+  assert.match(client,/server\('disablePlace', payload\)/);
+  assert.match(fs.readFileSync(path.join(root,'Code.gs'),'utf8'),/function disablePlace\(payload\)/);
+  assert.match(client,/clearSelection\(\);[\s\S]*?renderAll\(\);[\s\S]*?fitData\(\)/);
+  assert.match(styles,/\.danger-zone/);
 });
 
 test('地点専用編集レイアウトと地図は確定したGrid行の内側に収まる', () => {

@@ -33,6 +33,10 @@ function savePlaceBundle(payload) {
   return apiCall_(function () { return savePlaceBundle_(payload); });
 }
 
+function disablePlace(payload) {
+  return apiCall_(function () { return disablePlace_(payload); });
+}
+
 function mergePlaces(payload) {
   return apiCall_(function () { return mergePlaces_(payload); });
 }
