@@ -121,7 +121,8 @@
   }
 
   function renderBasePlaceList(matchingPlaces, q) {
-    const ids=new Set(matchingPlaces.filter(place=>String(place.base_area_id||'').trim()).map(place=>place.place_id));
+    const baseIds=activeBaseIds();
+    const ids=new Set(matchingPlaces.filter(place=>baseIds.has(String(place.base_area_id||'').trim())).map(place=>place.place_id));
     renderPlaceGroups($('basePlaceList'),orderedBasePlaceRecords().filter(record=>ids.has(record.place.place_id)),Boolean(q.trim()));
   }
 
@@ -142,7 +143,8 @@
       if($('retryMunicipalityBtn'))$('retryMunicipalityBtn').addEventListener('click',retryMunicipalityBoundary);
     }else{
       const classificationStarted=performance.now();
-      const ids=new Set(context.places.filter(place=>!String(place.base_area_id||'').trim()).map(place=>place.place_id));
+      const baseIds=activeBaseIds();
+      const ids=new Set(context.places.filter(place=>!baseIds.has(String(place.base_area_id||'').trim())).map(place=>place.place_id));
       renderPlaceGroups(container,orderedPlaceRecords().filter(record=>ids.has(record.place.place_id)),Boolean(context.q.trim()));
       if(!container.innerHTML)container.innerHTML='<div class="list-meta">基地外の該当地点なし</div>';
       if(resource.metrics){resource.metrics.classificationMs=performance.now()-classificationStarted;publishBoundaryMetrics('municipality');}
@@ -160,7 +162,8 @@
 
   function orderedPlaceRecords() {
     const municipalityIndex = state.boundaries.municipality.index;
-    const places=state.places.filter(place=>place['有効']!==false&&!String(place.base_area_id||'').trim());
+    const baseIds=activeBaseIds();
+    const places=state.places.filter(place=>place['有効']!==false&&!baseIds.has(String(place.base_area_id||'').trim()));
     const signature = GeoPlaceOrder.signature(places, state.points, state.baseAreas, state.municipalities, municipalityIndex);
     if (state.placeOrderCache.signature !== signature) {
       state.placeOrderCache.signature=signature;
@@ -170,13 +173,18 @@
   }
 
   function orderedBasePlaceRecords() {
-    const places=state.places.filter(place=>place['有効']!==false&&String(place.base_area_id||'').trim());
+    const baseIds=activeBaseIds();
+    const places=state.places.filter(place=>place['有効']!==false&&baseIds.has(String(place.base_area_id||'').trim()));
     const signature=GeoPlaceOrder.signature(places,state.points,state.baseAreas,state.municipalities,null);
     if(state.placeOrderCache.baseSignature!==signature){
       state.placeOrderCache.baseSignature=signature;
       state.placeOrderCache.baseRecords=GeoPlaceOrder.orderPlaces(places,state.points,state.baseAreas,state.municipalities,null);
     }
     return state.placeOrderCache.baseRecords;
+  }
+
+  function activeBaseIds() {
+    return new Set(state.baseAreas.filter(base=>base['有効']!==false).map(base=>String(base.base_area_id)));
   }
 
   function boundaryKind() { return state.mode === 'bases' ? 'base' : 'municipality'; }

@@ -89,7 +89,7 @@ test('距離計算は既知の緯度差をメートルで返す', () => {
   assert.ok(Math.abs(context.distanceMeters_(0, 0, 0.001, 0) - 111.195) < 0.2);
 });
 
-test('登録地点はbase_area_idごとにまとまり、同一データなら安定した空間順になる', () => {
+test('登録地点はbase_area_idごとにまとまり、同一データなら安定順になる', () => {
   const places=[
     place({place_id:'a','地点名':'A',base_area_id:'base-1'}),
     place({place_id:'b','地点名':'B',base_area_id:''}),
@@ -108,6 +108,54 @@ test('登録地点はbase_area_idごとにまとまり、同一データなら�
   assert.deepEqual(first,second);
   assert.equal(Math.abs(first.indexOf('a')-first.indexOf('c')),1);
   assert.equal(spatial.orderPlaces(places,points,bases).filter(record => record.groupLabel === 'フォスター').length,2);
+});
+
+test('基地内は数字開始・英字開始・その他の順でnatural sortする', () => {
+  const names=['体育館','5704B','PX','1000','200','5704','ATM','50','5704A','USO','病院'];
+  const places=names.map((name,index)=>place({place_id:`base-${index}`,'地点名':name,base_area_id:'base-1'}));
+  const points=places.map((item,index)=>point({point_id:`point-${index}`,place_id:item.place_id,'中心緯度':26.30+index*.001,'中心経度':127.76}));
+  const ordered=spatial.orderPlaces(places,points,[baseArea()]);
+  assert.deepEqual(Array.from(ordered, record=>record.place['地点名']),[
+    '50','200','1000','5704','5704A','5704B','ATM','PX','USO','体育館','病院'
+  ]);
+});
+
+test('基地内の数値と英数値はnatural sortし、全角数字と前後空白は比較時だけ正規化する', () => {
+  const names=['A10','A2','A1','20','3','100','２００',' 2 '];
+  const places=names.map((name,index)=>place({place_id:`natural-${index}`,'地点名':name,base_area_id:'base-1'}));
+  const points=places.map((item,index)=>point({point_id:`natural-point-${index}`,place_id:item.place_id,'中心緯度':26.30+index*.001,'中心経度':127.76}));
+  const ordered=spatial.orderPlaces(places,points,[baseArea()]);
+  assert.deepEqual(Array.from(ordered, record=>record.place['地点名']),[' 2 ','3','20','100','２００','A1','A2','A10']);
+  assert.equal(ordered.find(record=>record.place.place_id==='natural-6').place['地点名'],'２００');
+});
+
+test('基地グループ順と市町村内の近接順は基地内名称sort後も維持する', () => {
+  const places=[
+    place({place_id:'base-far','地点名':'2',base_area_id:'base-1'}),
+    place({place_id:'base-near','地点名':'10',base_area_id:'base-1'}),
+    place({place_id:'municipality-far','地点名':'1'}),
+    place({place_id:'municipality-near','地点名':'9999'})
+  ];
+  const points=[
+    point({point_id:'base-far-point',place_id:'base-far','中心緯度':26.30,'中心経度':127.76}),
+    point({point_id:'base-near-point',place_id:'base-near','中心緯度':26.20,'中心経度':127.70}),
+    point({point_id:'municipality-far-point',place_id:'municipality-far','中心緯度':26.30,'中心経度':127.76}),
+    point({point_id:'municipality-near-point',place_id:'municipality-near','中心緯度':26.20,'中心経度':127.70})
+  ];
+  const municipalityIndex={find:()=> 'municipality-1'};
+  const ordered=spatial.orderPlaces(places,points,[baseArea()],[municipality()],municipalityIndex);
+  assert.deepEqual(Array.from(ordered,record=>record.place.place_id),[
+    'base-far','base-near','municipality-near','municipality-far'
+  ]);
+});
+
+test('有効な基地に所属する地点だけに基地内名称sortを適用する', () => {
+  const places=[place({place_id:'inactive-base-place','地点名':'10',base_area_id:'inactive-base'})];
+  const points=[point({point_id:'inactive-base-point',place_id:'inactive-base-place','中心緯度':26.27,'中心経度':127.76})];
+  const index=boundaryIndex([rectangleFeature('municipality-1',26.24,127.72,26.31,127.80)]);
+  const ordered=spatial.orderPlaces(places,points,[baseArea({base_area_id:'inactive-base','有効':false})],[municipality()],index);
+  assert.equal(ordered[0].groupType,'municipality');
+  assert.equal(ordered[0].groupLabel,'宜野湾市');
 });
 
 test('近い地点を連続させ、複数point地点は表示順先頭の有効pointで1件として扱う', () => {

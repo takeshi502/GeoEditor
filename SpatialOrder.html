@@ -12,6 +12,34 @@
     return String(value == null ? '' : value);
   }
 
+  function normalizedPlaceName(value) {
+    const trimmed = text(value).trim();
+    return typeof trimmed.normalize === 'function' ? trimmed.normalize('NFKC') : trimmed;
+  }
+
+  function basePlaceNameCategory(value) {
+    const normalized = normalizedPlaceName(value);
+    if (/^[0-9]/.test(normalized)) return 0;
+    if (/^[A-Za-z]/.test(normalized)) return 1;
+    return 2;
+  }
+
+  function naturalNameCompare(left, right) {
+    return normalizedPlaceName(left).localeCompare(normalizedPlaceName(right), 'ja', {
+      numeric:true,
+      sensitivity:'base'
+    });
+  }
+
+  function compareBasePlaceNames(left, right) {
+    const leftName = left && left.place ? left.place['地点名'] : left;
+    const rightName = right && right.place ? right.place['地点名'] : right;
+    return basePlaceNameCategory(leftName) - basePlaceNameCategory(rightName)
+      || naturalNameCompare(leftName, rightName)
+      || text(leftName).localeCompare(text(rightName), 'ja')
+      || text(left && left.place ? left.place.place_id : '').localeCompare(text(right && right.place ? right.place.place_id : ''));
+  }
+
   function representativePoint(placeId, points) {
     return points.filter(point => point.place_id === placeId && point['有効'] !== false)
       .slice()
@@ -43,9 +71,12 @@
     return result;
   }
 
-  function baseName(baseId, baseAreas) {
-    const base = baseAreas.find(item => text(item.base_area_id) === text(baseId)) || {};
-    return text(base['基地名'] || base['base_area_name'] || base['名称'] || baseId);
+  function activeBase(baseId, baseAreas) {
+    return baseAreas.find(item => item['有効'] !== false && text(item.base_area_id) === text(baseId)) || null;
+  }
+
+  function baseName(base, baseId) {
+    return text(base && (base['基地名'] || base['base_area_name'] || base['名称']) || baseId);
   }
 
   function municipalityForPoint(point, municipalities, boundaryIndex) {
@@ -65,7 +96,9 @@
     return places.filter(place => place['有効'] !== false).map(place => {
       const point = representativePoint(place.place_id, points);
       const spatialKey = point ? geohash(point['中心緯度'], point['中心経度'], 7) : 'zzzzzzz';
-      const baseId = text(place.base_area_id).trim();
+      const requestedBaseId = text(place.base_area_id).trim();
+      const base = requestedBaseId ? activeBase(requestedBaseId, baseAreas || []) : null;
+      const baseId = base ? requestedBaseId : '';
       const municipality = baseId ? null : municipalityForPoint(point, municipalities || [], boundaryIndex);
       const municipalityId = text(municipality && municipality.municipality_id);
       return {
@@ -73,7 +106,7 @@
         point,
         spatialKey,
         groupKey:baseId ? `base:${baseId}` : municipalityId ? `municipality:${municipalityId}` : 'municipality:unclassified',
-        groupLabel:baseId ? baseName(baseId, baseAreas) : municipality ? municipalityName(municipality) : '市町村未判定',
+        groupLabel:baseId ? baseName(base, baseId) : municipality ? municipalityName(municipality) : '市町村未判定',
         groupType:baseId ? 'base' : municipality ? 'municipality' : 'unclassified'
       };
     });
@@ -86,11 +119,14 @@
       grouped.get(record.groupKey).push(record);
     });
     return Array.from(grouped.entries()).map(([groupKey, items]) => {
-      items.sort((a, b) => a.spatialKey.localeCompare(b.spatialKey)
-        || text(a.place['地点名']).localeCompare(text(b.place['地点名']), 'ja')
-        || text(a.place.place_id).localeCompare(text(b.place.place_id)));
       const groupRank = items[0].groupType === 'base' ? 0 : items[0].groupType === 'municipality' ? 1 : 2;
-      return { groupKey, items, groupRank, firstSpatialKey:items[0].spatialKey };
+      const firstSpatialKey = items.reduce((first, item) => item.spatialKey < first ? item.spatialKey : first, 'zzzzzzz');
+      items.sort(groupRank === 0
+        ? compareBasePlaceNames
+        : (a, b) => a.spatialKey.localeCompare(b.spatialKey)
+          || text(a.place['地点名']).localeCompare(text(b.place['地点名']), 'ja')
+          || text(a.place.place_id).localeCompare(text(b.place.place_id)));
+      return { groupKey, items, groupRank, firstSpatialKey };
     }).sort((a, b) => a.groupRank - b.groupRank
       || a.firstSpatialKey.localeCompare(b.firstSpatialKey)
       || a.groupKey.localeCompare(b.groupKey))
@@ -105,6 +141,6 @@
     return recordSignature;
   }
 
-  window.GeoPlaceOrder = Object.freeze({ geohash, representativePoint, municipalityForPoint, orderPlaces, signature });
+  window.GeoPlaceOrder = Object.freeze({ geohash, representativePoint, municipalityForPoint, compareBasePlaceNames, orderPlaces, signature });
 })();
 </script>
